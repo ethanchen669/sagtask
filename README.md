@@ -237,7 +237,7 @@ __pycache__/
 
 | Item | Value |
 |------|-------|
-| Plugin directory | `~/.hermes/hermes-agent/plugins/memory/memproject/` |
+| Plugin directory | `~/.hermes/hermes-agent/plugins/memory/memproject/` (bundled) |\n| Legacy location | `~/.hermes/plugins/memproject/` (deprecated) |
 | Plugin name | `memproject` |
 | Provider class | `MemProjectProvider` |
 | Provider name | `memproject` |

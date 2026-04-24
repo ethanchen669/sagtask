@@ -32,18 +32,34 @@ logger = logging.getLogger(__name__)
 MEMPROJECT_PROVIDER = "memproject"
 
 # Tool schemas exposed by this provider
-from .providers.tools import (
-    TASK_CREATE_SCHEMA,
-    TASK_STATUS_SCHEMA,
-    TASK_PAUSE_SCHEMA,
-    TASK_RESUME_SCHEMA,
-    TASK_ADVANCE_SCHEMA,
-    TASK_APPROVE_SCHEMA,
-    TASK_LIST_SCHEMA,
-    TASK_COMMIT_SCHEMA,
-    TASK_BRANCH_SCHEMA,
-    TASK_GIT_LOG_SCHEMA,
-)
+try:
+    from .providers.tools import (
+        TASK_CREATE_SCHEMA,
+        TASK_STATUS_SCHEMA,
+        TASK_PAUSE_SCHEMA,
+        TASK_RESUME_SCHEMA,
+        TASK_ADVANCE_SCHEMA,
+        TASK_APPROVE_SCHEMA,
+        TASK_LIST_SCHEMA,
+        TASK_COMMIT_SCHEMA,
+        TASK_BRANCH_SCHEMA,
+        TASK_GIT_LOG_SCHEMA,
+    )
+except ModuleNotFoundError:
+    # User plugin context: _hermes_user_memory.memproject doesn't have a parent
+    # package in sys.modules, so use absolute import from the memproject package
+    from memproject.providers.tools import (
+        TASK_CREATE_SCHEMA,
+        TASK_STATUS_SCHEMA,
+        TASK_PAUSE_SCHEMA,
+        TASK_RESUME_SCHEMA,
+        TASK_ADVANCE_SCHEMA,
+        TASK_APPROVE_SCHEMA,
+        TASK_LIST_SCHEMA,
+        TASK_COMMIT_SCHEMA,
+        TASK_BRANCH_SCHEMA,
+        TASK_GIT_LOG_SCHEMA,
+    )
 
 ALL_TOOL_SCHEMAS = [
     TASK_CREATE_SCHEMA,
@@ -501,3 +517,12 @@ class MemProjectProvider(MemoryProvider):
                         return s.get("name", current_step_id)
                 if steps:
                     return steps[0].get("name", "—")
+
+
+# ---------------------------------------------------------------------------
+# Plugin registration
+# ---------------------------------------------------------------------------
+
+def register(ctx) -> None:
+    """Register MemProject as a memory provider plugin."""
+    ctx.register_memory_provider(MemProjectProvider())
