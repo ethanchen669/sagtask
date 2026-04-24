@@ -501,8 +501,3 @@ class MemProjectProvider(MemoryProvider):
                         return s.get("name", current_step_id)
                 if steps:
                     return steps[0].get("name", "—")
-        return "—"
-
-
-def register(ctx) -> None:
-    ctx.register_memory_provider(MemProjectProvider())
