@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import logging
 import threading
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -44,6 +45,7 @@ try:
         TASK_COMMIT_SCHEMA,
         TASK_BRANCH_SCHEMA,
         TASK_GIT_LOG_SCHEMA,
+        TASK_RELATE_SCHEMA,
     )
 except ModuleNotFoundError:
     # User plugin context: _hermes_user_memory.memtask doesn't have a parent
@@ -72,6 +74,7 @@ ALL_TOOL_SCHEMAS = [
     TASK_COMMIT_SCHEMA,
     TASK_BRANCH_SCHEMA,
     TASK_GIT_LOG_SCHEMA,
+    TASK_RELATE_SCHEMA,
 ]
 
 
@@ -391,6 +394,7 @@ class MemTaskProvider(MemoryProvider):
             handle_task_commit,
             handle_task_branch,
             handle_task_git_log,
+            handle_task_relate,
         )
 
         handler_map = {
@@ -404,6 +408,7 @@ class MemTaskProvider(MemoryProvider):
             "task_commit": handle_task_commit,
             "task_branch": handle_task_branch,
             "task_git_log": handle_task_git_log,
+            "task_relate": handle_task_relate,
         }
 
         handler = handler_map.get(tool_name)
@@ -447,8 +452,50 @@ class MemTaskProvider(MemoryProvider):
         if artifacts:
             lines.append(f"- Recent artifacts: {artifacts}")
 
+        # Cross-pollination context injection
+        cross_context = self._build_cross_pollination_context(state)
+        if cross_context:
+            lines.append("")
+            lines.append(cross_context)
+
         with self._prefetch_lock:
             self._prefetch_result = "\n".join(lines)
+
+    def _build_cross_pollination_context(self, state: Dict[str, Any]) -> str:
+        """Build prefetch text for cross-pollination related tasks."""
+        relationships = state.get("relationships", [])
+        cross_tasks = [
+            r for r in relationships if r.get("relationship") == "cross-pollination"
+        ]
+        if not cross_tasks:
+            return ""
+
+        # Enforce N≤2
+        cross_tasks = cross_tasks[:2]
+
+        lines = ["## Related Task Context (Cross-Pollination)"]
+        for rel in cross_tasks:
+            related_id = rel.get("task_id")
+            summaries = self._generate_artifact_summaries(related_id)
+            if not summaries:
+                continue
+
+            lines.append(f"\n### {related_id}")
+            # Enforce M≤3, truncate each at 200 chars
+            for s in summaries[:3]:
+                path = s.get("path", "")
+                summary = s.get("summary", "")
+                lines.append(f"[{path}]")
+                lines.append(summary)
+            lines.append(
+                f"→ Use `task_status(task_id=\"{related_id}\")` to see full context"
+            )
+
+        overflow = len(cross_tasks) - 2
+        if overflow > 0:
+            lines.append(f"\n...and {overflow} more related task(s)")
+
+        return "\n".join(lines)
 
     def on_session_end(self, messages: List[Dict[str, Any]]) -> None:
         """Extract task conclusions at end of session."""
@@ -517,7 +564,94 @@ class MemTaskProvider(MemoryProvider):
                         return s.get("name", current_step_id)
                 if steps:
                     return steps[0].get("name", "—")
+        return current_step_id or "—"
 
+    # ── Artifact summaries ───────────────────────────────────────────────────────
+
+    MAX_ARTIFACT_SUMMARIES = 3
+    SUMMARY_TRUNCATE_AT = 200
+
+    def _generate_artifact_summaries(
+        self, task_id: str, force: bool = False
+    ) -> List[Dict[str, Any]]:
+        """Generate or refresh artifact_summaries for a task.
+
+        Returns cached summaries from task_state if:
+        - they exist AND force=False (cached, fresh until next task_advance)
+        - artifacts/ directory is empty or missing
+
+        Otherwise scans artifacts/ and generates summaries on-demand.
+        """
+        state = self.load_task_state(task_id)
+        if not state:
+            return []
+
+        # Return cached if exists and not forcing refresh
+        if not force:
+            cached = state.get("artifact_summaries", [])
+            if cached:
+                return cached
+
+        task_root = self.get_task_root(task_id)
+        artifacts_dir = task_root / "artifacts"
+        if not artifacts_dir.exists():
+            return []
+
+        # Collect files, sort by mtime descending, limit to MAX
+        files = sorted(
+            artifacts_dir.rglob("*"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        files = [f for f in files if f.is_file()]
+        files = files[: self.MAX_ARTIFACT_SUMMARIES]
+
+        summaries = []
+        for f in files:
+            summary = self._summarize_artifact_file(f, task_id)
+            summaries.append(summary)
+
+        # Cache in task_state
+        if summaries:
+            state["artifact_summaries"] = summaries
+            self.save_task_state(task_id, state)
+
+        return summaries
+
+    def _summarize_artifact_file(self, path: Path, task_id: str) -> Dict[str, str]:
+        """Generate a one-line summary for an artifact file."""
+        try:
+            size = path.stat().st_size
+        except OSError:
+            size = 0
+
+        # Compute relative path from task root: artifacts/...
+        task_root = self.get_task_root(task_id)
+        try:
+            rel_path = str(path.relative_to(task_root))
+        except ValueError:
+            rel_path = str(path)
+
+        text_extensions = {".md", ".py", ".yaml", ".yml", ".json", ".txt", ".csv", ".log"}
+        if path.suffix.lower() in text_extensions:
+            try:
+                content = path.read_text(encoding="utf-8", errors="replace")
+                # Take first non-empty line or first 200 chars
+                lines = [l.strip() for l in content.splitlines() if l.strip()]
+                sample = lines[0] if lines else content[: self.SUMMARY_TRUNCATE_AT]
+                if len(sample) > self.SUMMARY_TRUNCATE_AT:
+                    sample = sample[: self.SUMMARY_TRUNCATE_AT] + "…"
+                summary_text = sample or "(empty file)"
+            except OSError:
+                summary_text = f"File, {size} bytes"
+        else:
+            summary_text = f"Binary file, {size} bytes"
+
+        return {
+            "path": rel_path,
+            "summary": summary_text,
+            "generated_at": datetime.utcnow().isoformat() + "Z",
+        }
 
 # ---------------------------------------------------------------------------
 # Plugin registration

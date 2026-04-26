@@ -39,6 +39,8 @@ def handle_task_create(provider: MemTaskProvider, args: Dict[str, Any]) -> Dict[
         "artifacts_summary": "",
         "decisions": [],
         "executions": [],
+        "relationships": [],
+        "artifact_summaries": [],
     }
 
     provider.save_task_state(task_id, state)
@@ -477,4 +479,85 @@ def handle_task_git_log(provider: MemTaskProvider, args: Dict[str, Any]) -> Dict
         "ok": True,
         "task_id": task_id,
         "commits": git_log,
+    }
+
+
+# ── Cross-Task Relationships ──────────────────────────────────────────────────
+
+MAX_CROSS_POLLINATION = 2
+
+
+def handle_task_relate(provider: MemTaskProvider, args: Dict[str, Any]) -> Dict[str, Any]:
+    task_id = args.get("task_id") or provider._active_task_id
+    related_task_id = args.get("related_task_id")
+    relationship = args.get("relationship")
+    action = args.get("action")
+
+    if not task_id:
+        return {"ok": False, "error": "No active task. Provide task_id explicitly."}
+    if not related_task_id:
+        return {"ok": False, "error": "related_task_id is required."}
+    if not relationship:
+        return {"ok": False, "error": "relationship is required."}
+    if action not in ("add", "remove"):
+        return {"ok": False, "error": "action must be 'add' or 'remove'."}
+
+    state = provider.load_task_state(task_id)
+    if not state:
+        return {"ok": False, "error": f"Task '{task_id}' not found."}
+
+    # Verify related task exists
+    related_state = provider.load_task_state(related_task_id)
+    if not related_state:
+        return {"ok": False, "error": f"Related task '{related_task_id}' not found."}
+
+    relationships = state.get("relationships", [])
+
+    if action == "add":
+        # Check N≤2 for cross-pollination
+        cross_poll_count = sum(
+            1 for r in relationships if r.get("relationship") == "cross-pollination"
+        )
+        if cross_poll_count >= MAX_CROSS_POLLINATION:
+            return {
+                "ok": False,
+                "error": f"Max {MAX_CROSS_POLLINATION} cross-pollination relationships allowed. "
+                f"Use task_relate with action='remove' to remove one first.",
+            }
+
+        # Avoid duplicate
+        existing = [r for r in relationships if r.get("task_id") == related_task_id]
+        if existing:
+            return {
+                "ok": False,
+                "error": f"Task '{related_task_id}' is already in the relationships list.",
+            }
+
+        relationships.append({
+            "task_id": related_task_id,
+            "relationship": relationship,
+        })
+
+    elif action == "remove":
+        before = len(relationships)
+        relationships = [
+            r for r in relationships if r.get("task_id") != related_task_id
+        ]
+        if len(relationships) == before:
+            return {
+                "ok": False,
+                "error": f"Task '{related_task_id}' was not in the relationships list.",
+            }
+
+    state["relationships"] = relationships
+    state["updated_at"] = datetime.utcnow().isoformat() + "Z"
+    provider.save_task_state(task_id, state)
+
+    return {
+        "ok": True,
+        "task_id": task_id,
+        "relationship": relationship,
+        "related_task_id": related_task_id,
+        "action": action,
+        "total_relationships": len(relationships),
     }

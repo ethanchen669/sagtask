@@ -265,3 +265,38 @@ TASK_GIT_LOG_SCHEMA = {
         "required": [],
     },
 }
+
+# ── Cross-Task Relationships ────────────────────────────────────────────────
+
+TASK_RELATE_SCHEMA = {
+    "name": "task_relate",
+    "description": "Declare a cross-pollination relationship with another task. "
+    "Use this when two tasks share the same research theme but follow different research paths "
+    "and their artifacts may inspire each other. "
+    "Relationships are stored in task_state.json. Max 2 cross-pollination relationships per task.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "task_id": {
+                "type": "string",
+                "description": "Task to add a relationship to. Omit for the active task.",
+            },
+            "related_task_id": {
+                "type": "string",
+                "description": "The task_id of the related task to link.",
+            },
+            "relationship": {
+                "type": "string",
+                "description": "Relationship type. Use 'cross-pollination' for medium-strength "
+                "same-theme-different-path relationships.",
+                "enum": ["cross-pollination"],
+            },
+            "action": {
+                "type": "string",
+                "description": "'add' to add a relationship, 'remove' to remove it.",
+                "enum": ["add", "remove"],
+            },
+        },
+        "required": ["related_task_id", "relationship", "action"],
+    },
+}
