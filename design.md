@@ -275,7 +275,7 @@ BOM 展开算法草稿，递归实现思路，3 层深度限制
 
 ### Size Controls
 
-- Max N related tasks injected (N=5, beyond which truncate with "...and N more")
+- Max N related tasks injected (N≤2, beyond which truncate with "...and N more")
 - Max M artifact summaries per related task (M=3, beyond which truncate)
 - Each summary capped at ~200 characters
 

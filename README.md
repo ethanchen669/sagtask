@@ -231,7 +231,7 @@ BOM 展开算法草稿，递归实现思路，3 层深度限制
 → Use `task_status(task_id="sc-bom-research-v1")` to see full context
 ```
 
-Size controls: max 5 related tasks, max 3 artifacts per task, ~200 chars per summary.
+Size controls: max 2 related tasks, max 3 artifacts per task, ~200 chars per summary.
 
 ### From Implicit to Explicit (方式二)
 
