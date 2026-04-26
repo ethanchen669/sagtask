@@ -98,6 +98,105 @@ shutdown()
 
 ---
 
+## Active Task Context Mechanism
+
+The active task is the task that the LLM is currently "inside" — the one whose state gets injected into the system prompt and prefetch cache on every turn. Without an active task, memtask's context injection is empty and the LLM treats it as having no task context.
+
+### Marking a Task Active
+
+The active task is stored in a plain text marker file:
+
+```
+~/.hermes/projects/.active_task   ← contains: <task_id> (e.g. "sc-mrp-v1")
+```
+
+Three operations set the active task (all call `provider._set_active_task(task_id)`):
+
+| Operation | Effect |
+|-----------|--------|
+| `task_create` | New task is automatically marked active |
+| `task_resume` | The resumed task is marked active |
+| `task_advance` | Moves to next step; task stays active |
+
+`initialize()` calls `_restore_active_task()` on startup, which reads `.active_task` and restores the previously active task across sessions.
+
+### Context Injection — How the LLM Sees the Active Task
+
+MemTaskProvider uses a **three-layer injection** pattern:
+
+**Layer 1 — `initialize()` (once per session)**
+
+```
+MemTaskProvider initialized, projects_root=~/.hermes/projects/, active_task=sc-mrp-v1
+```
+
+**Layer 2 — `system_prompt_block()` (once per session, in system prompt)**
+
+```
+# MemTask — Active Task
+Task: `sc-mrp-v1`  Status: **active**
+Phase: 数据建模  Step: 数据模型设计
+⏳ Awaiting approval: gate-1-approve-model
+
+Use `task_status`, `task_pause`, `task_advance`, or `task_approve` to manage this task.
+```
+
+**Layer 3 — `prefetch()` + `on_turn_start()` (every turn)**
+
+`on_turn_start()` runs at the start of each conversation turn, builds a compact summary, and stores it in `_prefetch_result`. `prefetch()` returns this cached value for injection before the LLM generates its next response:
+
+```
+## Active Task: sc-mrp-v1
+- Status: **active**
+- Phase: 数据建模  |  Step: 数据模型设计
+- ⏳ Awaiting approval: gate-1-approve-model
+- Recent artifacts: 已完成 BOM 树设计，支持 3 层递归展开
+```
+
+Thread-safe writes use `_prefetch_lock` — `on_turn_start` writes, `prefetch` reads.
+
+### Tool `task_id` Fallback
+
+Every tool that operates on a task accepts an optional `task_id` argument. If omitted, it falls back to the current active task:
+
+```python
+# In each tool handler:
+task_id = args.get("task_id") or provider._active_task_id
+```
+
+If no `task_id` is provided and `_active_task_id` is `None`, the tool returns an error like `{"ok": false, "error": "No task_id provided and no active task"}`.
+
+This means the LLM can say "show me the task status" without specifying which task, and it automatically targets the active one.
+
+### No Active Task = Silent No-Op
+
+All context injection methods return empty strings when `_active_task_id` is `None`. The LLM simply never sees any task-related context. No error is raised — memtask behaves as if no task exists.
+
+### Flow Diagram
+
+```
+Gateway startup
+  └─ MemTaskProvider.initialize()
+       └─ _restore_active_task()
+            └─ Read ~/.hermes/projects/.active_task → set _active_task_id
+
+Every turn:
+  └─ on_turn_start(turn_number, message)
+       └─ load_task_state(_active_task_id)
+       └─ build compact summary
+       └─ write to _prefetch_result (locked)
+
+  └─ prefetch(query, session_id)
+       └─ return _prefetch_result (cached value from on_turn_start)
+
+  └─ system_prompt_block()
+       └─ load_task_state(_active_task_id)
+       └─ return formatted static block (for system prompt, not per-turn)
+```
+
+---
+---
+
 ## Task State Schema
 
 ```json
