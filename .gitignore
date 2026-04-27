@@ -1,0 +1,5 @@
+.sag_task_state.json
+.sag_artifacts/
+.sag_executions/
+__pycache__/
+*.pyc
