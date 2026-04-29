@@ -30,13 +30,13 @@ No `pip install`, no extra dependencies, no `config.yaml` changes needed.
 | Tool | Description |
 |------|-------------|
 | `sag_task_create` | Create task with phased steps/gates, init Git + GitHub repo |
-| `sag_sag_task_status` | Show current phase/step/pending gates |
+| `sag_task_status` | Show current phase/step/pending gates |
 | `sag_task_pause` | Snapshot execution context for later resume |
 | `sag_task_resume` | Restore from most recent paused execution |
-| `sag_sag_task_advance` | Move to next Step/Phase, commit, create new branch |
-| `sag_sag_task_approve` | Submit approval decision for a pending gate |
+| `sag_task_advance` | Move to next Step/Phase, commit, create new branch |
+| `sag_task_approve` | Submit approval decision for a pending gate |
 | `sag_task_list` | List all tasks under `~/.hermes/sag_tasks/` |
-| `sag_sag_task_commit` | Stage all + commit with message |
+| `sag_task_commit` | Stage all + commit with message |
 | `sag_task_branch` | Create + push new branch |
 | `sag_task_git_log` | Show recent commit history |
 | `sag_task_relate` | Link two tasks as cross-pollination partners |
@@ -52,7 +52,7 @@ SagTaskPlugin registers with Hermes Agent using `ctx.register_tool()` + `ctx.reg
 ```
 register(ctx)
     ├── ctx.register_tool("sag_task_create", ...)
-    ├── ctx.register_tool("sag_sag_task_status", ...)
+    ├── ctx.register_tool("sag_task_status", ...)
     │    ...
     ├── ctx.register_tool("sag_task_relate", ...)
     ├── ctx.register_hook("pre_llm_call",  _on_pre_llm_call)   ← task context injection
@@ -73,11 +73,11 @@ register(ctx)
 | Tool | Description |
 |------|-------------|
 | `sag_task_create` | Create task with phased steps/gates, init Git repo + GitHub repo |
-| `sag_sag_task_status` | Show current phase/step/pending gates (verbose: full tree + git log) |
+| `sag_task_status` | Show current phase/step/pending gates (verbose: full tree + git log) |
 | `sag_task_pause` | Snapshot PausedExecutionContext to `executions/` |
 | `sag_task_resume` | Restore from most recent paused execution |
-| `sag_sag_task_advance` | Move to next Step/Phase: write task_state, commit, create new branch |
-| `sag_sag_task_approve` | Submit approval decision for a pending gate |
+| `sag_task_advance` | Move to next Step/Phase: write task_state, commit, create new branch |
+| `sag_task_approve` | Submit approval decision for a pending gate |
 
 **Task Discovery:**
 
@@ -89,7 +89,7 @@ register(ctx)
 
 | Tool | Description |
 |------|-------------|
-| `sag_sag_task_commit` | Stage all + commit with message |
+| `sag_task_commit` | Stage all + commit with message |
 | `sag_task_branch` | Create + push new branch |
 | `sag_task_git_log` | Show recent commit history |
 
@@ -136,7 +136,7 @@ Three operations set the active task:
 |-----------|--------|
 | `sag_task_create` | New task is automatically marked active |
 | `sag_task_resume` | The resumed task is marked active |
-| `sag_sag_task_advance` | Moves to next step; task stays active |
+| `sag_task_advance` | Moves to next step; task stays active |
 
 `on_session_start` hook calls `_restore_active_task()` on startup, which reads `.active_task` and restores the previously active task across sessions.
 
@@ -199,7 +199,7 @@ Tasks have three relationship tiers:
 }
 ```
 
-Summary generation: on-demand via LLM at prefetch time (方案 B), cached until next `sag_sag_task_advance`.
+Summary generation: on-demand via LLM at prefetch time (方案 B), cached until next `sag_task_advance`.
 
 ### Prefetch Injection
 
@@ -428,11 +428,11 @@ During conversation, the user or LLM explicitly calls tools to get deeper inform
 
 | Tool | Returns |
 |------|---------|
-| `sag_sag_task_status` | Full phase/step tree, pending gates, step description |
+| `sag_task_status` | Full phase/step tree, pending gates, step description |
 | `sag_task_git_log` | Recent commits, branch history |
 | `sag_task_branch` | Current branch, uncommitted changes |
 | `sag_task_commit --summary` | All decisions recorded so far |
-| `sag_sag_task_approve` | Details of a specific pending gate |
+| `sag_task_approve` | Details of a specific pending gate |
 
 ### Why Not Full Injection?
 

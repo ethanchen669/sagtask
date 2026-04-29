@@ -32,7 +32,7 @@ import threading
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 logger = logging.getLogger(__name__)
 
@@ -642,6 +642,105 @@ class SagTaskPlugin:
                     return steps[0].get("name", "—")
         return current_step_id or "—"
 
+    def _scan_git_artifacts(self, task_id: str) -> List[Dict[str, Any]]:
+        """Scan git diff of the last commit for changed/added files in this step.
+
+        Returns a list of artifact summaries from git-diff sources.
+        """
+        task_root = self.get_task_root(task_id)
+        git_dir = task_root / ".git"
+        if not git_dir.exists():
+            return []
+
+        summaries: List[Dict[str, Any]] = []
+
+        # 1. Diff HEAD~1 vs HEAD — what changed in the last commit
+        try:
+            count_result = subprocess.run(
+                ["git", "rev-list", "--count", "HEAD"],
+                cwd=str(task_root),
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            commit_count = int(count_result.stdout.strip() or "0")
+            if commit_count >= 2:
+                result = subprocess.run(
+                    ["git", "diff", "--stat", "HEAD~1", "HEAD"],
+                    cwd=str(task_root),
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+                if result.returncode == 0 and result.stdout.strip():
+                    lines = result.stdout.strip().splitlines()
+                    for line in lines[-self.MAX_ARTIFACT_SUMMARIES:]:
+                        parts = line.split()
+                        if len(parts) >= 4:
+                            file_path = parts[0]
+                            additions = parts[1] if len(parts) > 1 else "0"
+                            deletions = parts[3] if len(parts) > 3 else "0"
+                            summaries.append({
+                                "path": file_path,
+                                "summary": f"+{additions} -{deletions} (git diff HEAD~1..HEAD)",
+                                "generated_at": datetime.utcnow().isoformat() + "Z",
+                                "source": "git_diff",
+                            })
+        except Exception:
+            pass
+
+        # 2. List files changed (staged + unstaged) since last commit
+        try:
+            result = subprocess.run(
+                ["git", "status", "--porcelain"],
+                cwd=str(task_root),
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                for line in result.stdout.strip().splitlines()[:self.MAX_ARTIFACT_SUMMARIES]:
+                    # Format: XY path, XY is status like M=, A=, D=, ??=
+                    if len(line) < 4:
+                        continue
+                    status = line[:2].strip()
+                    file_path = line[3:].strip()
+                    summaries.append({
+                        "path": file_path,
+                        "summary": f"Git status: {status} (uncommitted)",
+                        "generated_at": datetime.utcnow().isoformat() + "Z",
+                        "source": "git_status",
+                    })
+        except Exception:
+            pass
+
+        # 3. List all tracked files (show file tree snapshot)
+        try:
+            result = subprocess.run(
+                ["git", "ls-files", "--stage"],
+                cwd=str(task_root),
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                lines = result.stdout.strip().splitlines()
+                tracked_files = [l.split(maxsplit=3)[-1] for l in lines if len(l.split(maxsplit=3)) >= 4]
+                # Filter out .sag_* meta files
+                tracked_files = [f for f in tracked_files if not f.startswith(".sag_")]
+                if tracked_files:
+                    summaries.append({
+                        "path": ".git/ls-files (tracked)",
+                        "summary": f"{len(tracked_files)} tracked file(s): {', '.join(tracked_files[:5])}" +
+                                   ("…" if len(tracked_files) > 5 else ""),
+                        "generated_at": datetime.utcnow().isoformat() + "Z",
+                        "source": "git_ls_files",
+                    })
+        except Exception:
+            pass
+
+        return summaries
+
     def _generate_artifact_summaries(self, task_id: str, force: bool = False) -> List[Dict[str, Any]]:
         state = self.load_task_state(task_id)
         if not state:
@@ -650,18 +749,41 @@ class SagTaskPlugin:
             cached = state.get("artifact_summaries", [])
             if cached:
                 return cached
+
+        all_summaries: List[Dict[str, Any]] = []
+
+        # Source 1: .sag_artifacts/ directory (manual artifact storage)
         task_root = self.get_task_root(task_id)
         artifacts_dir = task_root / ".sag_artifacts"
-        if not artifacts_dir.exists():
-            return []
-        files = sorted(artifacts_dir.rglob("*"), key=lambda p: p.stat().st_mtime, reverse=True)
-        files = [f for f in files if f.is_file()][: self.MAX_ARTIFACT_SUMMARIES]
-        summaries = [self._summarize_artifact_file(f, task_id) for f in files]
-        state["artifact_summaries"] = summaries
-        self.save_task_state(task_id, state)
-        return summaries
+        if artifacts_dir.exists():
+            files = sorted(artifacts_dir.rglob("*"), key=lambda p: p.stat().st_mtime, reverse=True)
+            files = [f for f in files if f.is_file()][: self.MAX_ARTIFACT_SUMMARIES]
+            for f in files:
+                summary = self._summarize_artifact_file(f, task_id)
+                summary["source"] = "artifact_dir"
+                all_summaries.append(summary)
 
-    def _summarize_artifact_file(self, path: Path, task_id: str) -> Dict[str, str]:
+        # Source 2: Git diff (auto-captured on advance)
+        git_summaries = self._scan_git_artifacts(task_id)
+        for s in git_summaries:
+            if s not in all_summaries:  # deduplicate
+                all_summaries.append(s)
+
+        # Deduplicate by path
+        seen_paths: Set[str] = set()
+        unique_summaries: List[Dict[str, Any]] = []
+        for s in all_summaries:
+            if s.get("path") not in seen_paths:
+                seen_paths.add(s.get("path", ""))
+                unique_summaries.append(s)
+
+        # Trim to limit
+        unique_summaries = unique_summaries[: self.MAX_ARTIFACT_SUMMARIES]
+        state["artifact_summaries"] = unique_summaries
+        self.save_task_state(task_id, state)
+        return unique_summaries
+
+    def _summarize_artifact_file(self, path: Path, task_id: str) -> Dict[str, Any]:
         try:
             size = path.stat().st_size
         except OSError:
@@ -938,6 +1060,7 @@ def _handle_sag_task_advance(args: Dict[str, Any]) -> Dict[str, Any]:
         }
 
     task_root = p.get_task_root(task_id)
+
     if (task_root / ".git").exists():
         short_name = current_step_id or "current"
         msg = commit_message or f"WIP: [{short_name}] {steps[step_idx].get('name', '')}"
@@ -946,6 +1069,15 @@ def _handle_sag_task_advance(args: Dict[str, Any]) -> Dict[str, Any]:
             subprocess.run(["git", "commit", "-m", msg], cwd=str(task_root), capture_output=True, text=True)
         except Exception:
             pass
+
+    # Auto-generate artifact_summaries from git diff (if not manually provided)
+    # Runs AFTER git commit so git diff HEAD~1..HEAD captures this step's changes
+    if not artifacts_summary:
+        auto_summaries = p._generate_artifact_summaries(task_id, force=True)
+        if auto_summaries:
+            artifacts_summary = "; ".join(
+                f"{s['path']}: {s['summary']}" for s in auto_summaries[:3]
+            )
 
     state["current_phase_id"] = next_phase_id
     state["current_step_id"] = next_step_id
