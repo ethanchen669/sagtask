@@ -50,7 +50,7 @@ TASK_CREATE_SCHEMA = {
     "parameters": {
         "type": "object",
         "properties": {
-            "task_id": {
+            "sag_task_id": {
                 "type": "string",
                 "description": "Unique sag long term task identifier (alphanumeric + hyphens, e.g. 'sc-mrp-v1'). "
                 "Used as the Git repo name.",
@@ -99,7 +99,7 @@ TASK_CREATE_SCHEMA = {
                 },
             },
         },
-        "required": ["task_id", "name", "phases"],
+        "required": ["sag_task_id", "name", "phases"],
     },
 }
 
@@ -109,7 +109,7 @@ TASK_STATUS_SCHEMA = {
     "parameters": {
         "type": "object",
         "properties": {
-            "task_id": {
+            "sag_task_id": {
                 "type": "string",
                 "description": "Sag long term task identifier. Omit to use the currently active task.",
             },
@@ -132,7 +132,7 @@ TASK_PAUSE_SCHEMA = {
     "parameters": {
         "type": "object",
         "properties": {
-            "task_id": {"type": "string", "description": "Sag long term task to pause. Omit to pause the active task."},
+            "sag_task_id": {"type": "string", "description": "Sag long term task to pause. Omit to pause the active task."},
             "reason": {"type": "string", "description": "Reason for pausing (shown on resume)."},
         },
         "required": [],
@@ -147,7 +147,7 @@ TASK_RESUME_SCHEMA = {
     "parameters": {
         "type": "object",
         "properties": {
-            "task_id": {"type": "string", "description": "Sag long term task to resume. Omit to resume the active task."},
+            "sag_task_id": {"type": "string", "description": "Sag long term task to resume. Omit to resume the active task."},
         },
         "required": [],
     },
@@ -161,7 +161,7 @@ TASK_ADVANCE_SCHEMA = {
     "parameters": {
         "type": "object",
         "properties": {
-            "task_id": {"type": "string", "description": "Sag long term task to advance. Omit for the active task."},
+            "sag_task_id": {"type": "string", "description": "Sag long term task to advance. Omit for the active task."},
             "commit_message": {
                 "type": "string",
                 "description": "Git commit message for the current step's work. "
@@ -184,7 +184,7 @@ TASK_APPROVE_SCHEMA = {
     "parameters": {
         "type": "object",
         "properties": {
-            "task_id": {"type": "string", "description": "Sag long term task with pending gate. Omit for the active task."},
+            "sag_task_id": {"type": "string", "description": "Sag long term task with pending gate. Omit for the active task."},
             "gate_id": {"type": "string", "description": "The gate ID to approve (from task_status pending_gates)."},
             "decision": {
                 "type": "string",
@@ -219,7 +219,7 @@ TASK_COMMIT_SCHEMA = {
     "parameters": {
         "type": "object",
         "properties": {
-            "task_id": {"type": "string", "description": "Sag long term task whose repo to commit. Omit for the active task."},
+            "sag_task_id": {"type": "string", "description": "Sag long term task whose repo to commit. Omit for the active task."},
             "message": {
                 "type": "string",
                 "description": "Commit message. Should follow: '[Step N] <description>'.",
@@ -237,7 +237,7 @@ TASK_BRANCH_SCHEMA = {
     "parameters": {
         "type": "object",
         "properties": {
-            "task_id": {"type": "string", "description": "Sag long term task whose repo to branch. Omit for the active task."},
+            "sag_task_id": {"type": "string", "description": "Sag long term task whose repo to branch. Omit for the active task."},
             "branch_name": {
                 "type": "string",
                 "description": "Full branch name (e.g. 'step/phase-2/step-3-bom-engine'). "
@@ -254,7 +254,7 @@ TASK_GIT_LOG_SCHEMA = {
     "parameters": {
         "type": "object",
         "properties": {
-            "task_id": {"type": "string", "description": "Sag long term task whose git log to show. Omit for the active task."},
+            "sag_task_id": {"type": "string", "description": "Sag long term task whose git log to show. Omit for the active task."},
             "max_count": {
                 "type": "integer",
                 "default": 20,
@@ -274,7 +274,7 @@ TASK_RELATE_SCHEMA = {
     "parameters": {
         "type": "object",
         "properties": {
-            "task_id": {"type": "string", "description": "Sag long term task to add a relationship to. Omit for the active task."},
+            "sag_task_id": {"type": "string", "description": "Sag long term task to add a relationship to. Omit for the active task."},
             "related_task_id": {"type": "string", "description": "The task_id of the related sag long term task to link."},
             "relationship": {
                 "type": "string",
@@ -477,7 +477,7 @@ class SagTaskPlugin:
         path = self.get_task_state_path(task_id)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(state, indent=2, ensure_ascii=False))
-        logger.debug("task_state.json written for task %s", task_id)
+        logger.debug("sag_task_state.json written for task %s", task_id)
 
     def system_prompt_block(self) -> str:
         if not self._active_task_id:
@@ -515,17 +515,17 @@ class SagTaskPlugin:
     def handle_tool_call(self, tool_name: str, args: Dict[str, Any], **kwargs) -> str:
         """Dispatch a tool call to the appropriate handler."""
         handler_map = {
-            "sag_task_create": _handle_task_create,
-            "sag_task_status": _handle_task_status,
-            "sag_task_pause": _handle_task_pause,
-            "sag_task_resume": _handle_task_resume,
-            "sag_task_advance": _handle_task_advance,
-            "sag_task_approve": _handle_task_approve,
-            "sag_task_list": _handle_task_list,
-            "sag_task_commit": _handle_task_commit,
-            "sag_task_branch": _handle_task_branch,
-            "sag_task_git_log": _handle_task_git_log,
-            "sag_task_relate": _handle_task_relate,
+            "sag_task_create": _handle_sag_task_create,
+            "sag_task_status": _handle_sag_task_status,
+            "sag_task_pause": _handle_sag_task_pause,
+            "sag_task_resume": _handle_sag_task_resume,
+            "sag_task_advance": _handle_sag_task_advance,
+            "sag_task_approve": _handle_sag_task_approve,
+            "sag_task_list": _handle_sag_task_list,
+            "sag_task_commit": _handle_sag_task_commit,
+            "sag_task_branch": _handle_sag_task_branch,
+            "sag_task_git_log": _handle_sag_task_git_log,
+            "sag_task_relate": _handle_sag_task_relate,
         }
         handler = handler_map.get(tool_name)
         if not handler:
@@ -571,7 +571,7 @@ class SagTaskPlugin:
         cross_tasks = cross_tasks[:2]
         lines = ["## Related Task Context (Cross-Pollination)"]
         for rel in cross_tasks:
-            related_id = rel.get("task_id")
+            related_id = rel.get("sag_task_id")
             summaries = self._generate_artifact_summaries(related_id)
             if not summaries:
                 continue
@@ -699,9 +699,9 @@ class SagTaskPlugin:
 MAX_CROSS_POLLINATION = 2
 
 
-def _handle_task_create(args: Dict[str, Any]) -> Dict[str, Any]:
+def _handle_sag_task_create(args: Dict[str, Any]) -> Dict[str, Any]:
     p = _get_provider()
-    task_id = args["task_id"]
+    task_id = args["sag_task_id"]
     name = args["name"]
     description = args.get("description", "")
     phases = args.get("phases", [])
@@ -710,7 +710,7 @@ def _handle_task_create(args: Dict[str, Any]) -> Dict[str, Any]:
     task_root.mkdir(parents=True, exist_ok=True)
 
     state = {
-        "task_id": task_id,
+        "sag_task_id": task_id,
         "name": name,
         "description": description,
         "status": "active",
@@ -739,7 +739,7 @@ def _handle_task_create(args: Dict[str, Any]) -> Dict[str, Any]:
 
     return {
         "ok": True,
-        "task_id": task_id,
+        "sag_task_id": task_id,
         "name": name,
         "status": "active",
         "current_phase": state["current_phase_id"],
@@ -748,13 +748,13 @@ def _handle_task_create(args: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _handle_task_status(args: Dict[str, Any]) -> Dict[str, Any]:
+def _handle_sag_task_status(args: Dict[str, Any]) -> Dict[str, Any]:
     p = _get_provider()
-    task_id = args.get("task_id") or p._active_task_id
+    task_id = args.get("sag_task_id") or p._active_task_id
     verbose = args.get("verbose", False)
 
     if not task_id:
-        return {"ok": False, "error": "No active task. Use task_list to find a task."}
+        return {"ok": False, "error": "No active sag long term task. Use sag_task_list to find a sag long term task."}
 
     state = p.load_task_state(task_id)
     if not state:
@@ -765,7 +765,7 @@ def _handle_task_status(args: Dict[str, Any]) -> Dict[str, Any]:
 
     result = {
         "ok": True,
-        "task_id": task_id,
+        "sag_task_id": task_id,
         "name": state.get("name"),
         "description": state.get("description"),
         "status": state.get("status"),
@@ -795,9 +795,9 @@ def _handle_task_status(args: Dict[str, Any]) -> Dict[str, Any]:
     return result
 
 
-def _handle_task_pause(args: Dict[str, Any]) -> Dict[str, Any]:
+def _handle_sag_task_pause(args: Dict[str, Any]) -> Dict[str, Any]:
     p = _get_provider()
-    task_id = args.get("task_id") or p._active_task_id
+    task_id = args.get("sag_task_id") or p._active_task_id
     reason = args.get("reason", "")
 
     if not task_id:
@@ -811,7 +811,7 @@ def _handle_task_pause(args: Dict[str, Any]) -> Dict[str, Any]:
 
     paused_ctx = {
         "execution_id": execution_id,
-        "task_id": task_id,
+        "sag_task_id": task_id,
         "status": "paused",
         "paused_at": datetime.utcnow().isoformat() + "Z",
         "reason": reason,
@@ -836,16 +836,16 @@ def _handle_task_pause(args: Dict[str, Any]) -> Dict[str, Any]:
 
     return {
         "ok": True,
-        "task_id": task_id,
+        "sag_task_id": task_id,
         "execution_id": execution_id,
         "status": "paused",
         "message": f"Task paused. Use task_resume('{task_id}') to continue.",
     }
 
 
-def _handle_task_resume(args: Dict[str, Any]) -> Dict[str, Any]:
+def _handle_sag_task_resume(args: Dict[str, Any]) -> Dict[str, Any]:
     p = _get_provider()
-    task_id = args.get("task_id") or p._active_task_id
+    task_id = args.get("sag_task_id") or p._active_task_id
 
     if not task_id:
         return {"ok": False, "error": "No active task."}
@@ -884,7 +884,7 @@ def _handle_task_resume(args: Dict[str, Any]) -> Dict[str, Any]:
 
     return {
         "ok": True,
-        "task_id": task_id,
+        "sag_task_id": task_id,
         "execution_id": resume_execution_id,
         "status": "active",
         "current_phase": paused_ctx.get("phase_id"),
@@ -894,9 +894,9 @@ def _handle_task_resume(args: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _handle_task_advance(args: Dict[str, Any]) -> Dict[str, Any]:
+def _handle_sag_task_advance(args: Dict[str, Any]) -> Dict[str, Any]:
     p = _get_provider()
-    task_id = args.get("task_id") or p._active_task_id
+    task_id = args.get("sag_task_id") or p._active_task_id
     commit_message = args.get("commit_message", "")
     artifacts_summary = args.get("artifacts_summary", "")
 
@@ -932,7 +932,7 @@ def _handle_task_advance(args: Dict[str, Any]) -> Dict[str, Any]:
         p.save_task_state(task_id, state)
         return {
             "ok": True,
-            "task_id": task_id,
+            "sag_task_id": task_id,
             "status": "completed",
             "message": "All phases completed. Task finished!",
         }
@@ -959,7 +959,7 @@ def _handle_task_advance(args: Dict[str, Any]) -> Dict[str, Any]:
 
     return {
         "ok": True,
-        "task_id": task_id,
+        "sag_task_id": task_id,
         "previous_phase": current_phase_id,
         "previous_step": current_step_id,
         "current_phase": next_phase_id,
@@ -968,9 +968,9 @@ def _handle_task_advance(args: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _handle_task_approve(args: Dict[str, Any]) -> Dict[str, Any]:
+def _handle_sag_task_approve(args: Dict[str, Any]) -> Dict[str, Any]:
     p = _get_provider()
-    task_id = args.get("task_id") or p._active_task_id
+    task_id = args.get("sag_task_id") or p._active_task_id
     gate_id = args.get("gate_id")
     decision = args.get("decision")
     comment = args.get("comment", "")
@@ -1000,18 +1000,18 @@ def _handle_task_approve(args: Dict[str, Any]) -> Dict[str, Any]:
     p.save_task_state(task_id, state)
 
     if decision == "Approve":
-        return _handle_task_advance({"task_id": task_id, "commit_message": f"[Gate {gate_id}] Approved: {comment}"})
+        return _handle_sag_task_advance({"sag_task_id": task_id, "commit_message": f"[Gate {gate_id}] Approved: {comment}"})
 
     return {
         "ok": True,
-        "task_id": task_id,
+        "sag_task_id": task_id,
         "gate_id": gate_id,
         "decision": decision,
         "message": f"Gate '{gate_id}' recorded as '{decision}'.",
     }
 
 
-def _handle_task_list(args: Dict[str, Any]) -> Dict[str, Any]:
+def _handle_sag_task_list(args: Dict[str, Any]) -> Dict[str, Any]:
     p = _get_provider()
     status_filter = args.get("status_filter", "all")
     projects_root = p._projects_root
@@ -1030,7 +1030,7 @@ def _handle_task_list(args: Dict[str, Any]) -> Dict[str, Any]:
             if status_filter != "all" and status != status_filter:
                 continue
             tasks.append({
-                "task_id": task_id,
+                "sag_task_id": task_id,
                 "name": state.get("name"),
                 "status": status,
                 "current_phase": p._get_current_phase(state),
@@ -1041,9 +1041,9 @@ def _handle_task_list(args: Dict[str, Any]) -> Dict[str, Any]:
     return {"ok": True, "tasks": tasks}
 
 
-def _handle_task_commit(args: Dict[str, Any]) -> Dict[str, Any]:
+def _handle_sag_task_commit(args: Dict[str, Any]) -> Dict[str, Any]:
     p = _get_provider()
-    task_id = args.get("task_id") or p._active_task_id
+    task_id = args.get("sag_task_id") or p._active_task_id
     message = args.get("message", "")
 
     if not task_id:
@@ -1062,15 +1062,15 @@ def _handle_task_commit(args: Dict[str, Any]) -> Dict[str, Any]:
 
     return {
         "ok": True,
-        "task_id": task_id,
+        "sag_task_id": task_id,
         "message": message,
         "commit_hash": result.stdout.strip(),
     }
 
 
-def _handle_task_branch(args: Dict[str, Any]) -> Dict[str, Any]:
+def _handle_sag_task_branch(args: Dict[str, Any]) -> Dict[str, Any]:
     p = _get_provider()
-    task_id = args.get("task_id") or p._active_task_id
+    task_id = args.get("sag_task_id") or p._active_task_id
     branch_name = args.get("branch_name")
 
     if not task_id:
@@ -1088,27 +1088,27 @@ def _handle_task_branch(args: Dict[str, Any]) -> Dict[str, Any]:
 
     return {
         "ok": True,
-        "task_id": task_id,
+        "sag_task_id": task_id,
         "branch_name": branch_name,
         "message": f"Branch '{branch_name}' created and checked out.",
     }
 
 
-def _handle_task_git_log(args: Dict[str, Any]) -> Dict[str, Any]:
+def _handle_sag_task_git_log(args: Dict[str, Any]) -> Dict[str, Any]:
     p = _get_provider()
-    task_id = args.get("task_id") or p._active_task_id
+    task_id = args.get("sag_task_id") or p._active_task_id
     max_count = args.get("max_count", 20)
 
     if not task_id:
         return {"ok": False, "error": "No active task."}
 
     log = p.git_log(task_id, max_count=max_count)
-    return {"ok": True, "task_id": task_id, "commits": log}
+    return {"ok": True, "sag_task_id": task_id, "commits": log}
 
 
-def _handle_task_relate(args: Dict[str, Any]) -> Dict[str, Any]:
+def _handle_sag_task_relate(args: Dict[str, Any]) -> Dict[str, Any]:
     p = _get_provider()
-    task_id = args.get("task_id") or p._active_task_id
+    task_id = args.get("sag_task_id") or p._active_task_id
     related_task_id = args.get("related_task_id")
     relationship = args.get("relationship")
     action = args.get("action")
@@ -1122,7 +1122,7 @@ def _handle_task_relate(args: Dict[str, Any]) -> Dict[str, Any]:
 
     if action == "list":
         rels = state.get("relationships", [])
-        return {"ok": True, "task_id": task_id, "relationships": rels}
+        return {"ok": True, "sag_task_id": task_id, "relationships": rels}
 
     if not related_task_id:
         return {"ok": False, "error": "related_task_id is required."}
@@ -1145,14 +1145,14 @@ def _handle_task_relate(args: Dict[str, Any]) -> Dict[str, Any]:
                 "error": f"Max {MAX_CROSS_POLLINATION} cross-pollination relationships allowed. "
                 f"Use task_relate with action='remove' to remove one first.",
             }
-        existing = [r for r in relationships if r.get("task_id") == related_task_id]
+        existing = [r for r in relationships if r.get("sag_task_id") == related_task_id]
         if existing:
             return {"ok": False, "error": f"Task '{related_task_id}' is already in the relationships list."}
-        relationships.append({"task_id": related_task_id, "relationship": relationship})
+        relationships.append({"sag_task_id": related_task_id, "relationship": relationship})
 
     elif action == "remove":
         before = len(relationships)
-        relationships = [r for r in relationships if r.get("task_id") != related_task_id]
+        relationships = [r for r in relationships if r.get("sag_task_id") != related_task_id]
         if len(relationships) == before:
             return {"ok": False, "error": f"Task '{related_task_id}' was not in the relationships list."}
 
@@ -1162,7 +1162,7 @@ def _handle_task_relate(args: Dict[str, Any]) -> Dict[str, Any]:
 
     return {
         "ok": True,
-        "task_id": task_id,
+        "sag_task_id": task_id,
         "relationship": relationship,
         "related_task_id": related_task_id,
         "action": action,
@@ -1175,17 +1175,17 @@ def _handle_task_relate(args: Dict[str, Any]) -> Dict[str, Any]:
 # ─────────────────────────────────────────────────────────────────────────────
 
 _tool_handlers = {
-    "task_create": _handle_task_create,
-    "task_status": _handle_task_status,
-    "task_pause": _handle_task_pause,
-    "task_resume": _handle_task_resume,
-    "task_advance": _handle_task_advance,
-    "task_approve": _handle_task_approve,
-    "task_list": _handle_task_list,
-    "task_commit": _handle_task_commit,
-    "task_branch": _handle_task_branch,
-    "task_git_log": _handle_task_git_log,
-    "task_relate": _handle_task_relate,
+    "sag_task_create": _handle_sag_task_create,
+    "sag_task_status": _handle_sag_task_status,
+    "sag_task_pause": _handle_sag_task_pause,
+    "sag_task_resume": _handle_sag_task_resume,
+    "sag_task_advance": _handle_sag_task_advance,
+    "sag_task_approve": _handle_sag_task_approve,
+    "sag_task_list": _handle_sag_task_list,
+    "sag_task_commit": _handle_sag_task_commit,
+    "sag_task_branch": _handle_sag_task_branch,
+    "sag_task_git_log": _handle_sag_task_git_log,
+    "sag_task_relate": _handle_sag_task_relate,
 }
 
 
