@@ -1,0 +1,1318 @@
+"""SagTask — Task management plugin for Hermes Agent.
+
+Per-task Git repos with human-in-the-loop approval gates and cross-session
+recovery. SagTask overlays task-management context on top of any existing
+memory provider — it does NOT replace it.
+
+INSTALLATION (user plugin):
+  git clone https://github.com/ethanchen669/sagtask.git ~/.hermes/plugins/sagtask
+  Restart the Hermes gateway.
+
+STORAGE LAYOUT:
+  ~/.hermes/sag_tasks/<task_id>/
+  ├── .git/                           ← Task Git repo (lazy init)
+  ├── .gitignore                      ← Ignores: .sag_task_state.json, .sag_artifacts/, .sag_executions/
+  ├── .sag_task_state.json            ← Machine-readable state (NOT in Git)
+  ├── src/                            ← ✅ In Git
+  ├── tests/                          ← ✅ In Git
+  ├── docs/                           ← ✅ In Git
+  ├── .sag_artifacts/                 ← ⚠️ Git-ignored (manual cleanup)
+  └── .sag_executions/                ← ⚠️ Git-ignored (snapshot on pause)
+SagTask — user plugin (standalone, NOT a memory provider).
+Context is injected via pre_llm_call hook.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import re
+import subprocess
+import threading
+import uuid
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+logger = logging.getLogger(__name__)
+
+SAGTASK_PROVIDER = "sagtask"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Tool schemas — inlined here so this file is self-contained (no providers/ subpackage)
+# ─────────────────────────────────────────────────────────────────────────────
+
+TASK_CREATE_SCHEMA = {
+    "name": "sag_task_create",
+    "description": "Create a new sag long term task with phased steps and approval gates. "
+    "Initializes a dedicated Git repo under ~/.hermes/sag_tasks/<task_id>/. "
+    "Returns the task_id and current state.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "task_id": {
+                "type": "string",
+                "description": "Unique sag long term task identifier (alphanumeric + hyphens, e.g. 'sc-mrp-v1'). "
+                "Used as the Git repo name.",
+            },
+            "name": {"type": "string", "description": "Human-readable task name."},
+            "description": {"type": "string", "description": "Detailed task description."},
+            "phases": {
+                "type": "array",
+                "description": "List of phases. Each phase has steps with optional approval gates.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "id": {"type": "string", "description": "Unique phase ID (e.g. 'phase-1')."},
+                        "name": {"type": "string", "description": "Phase name (e.g. '数据建模')."},
+                        "steps": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "id": {"type": "string"},
+                                    "name": {"type": "string"},
+                                    "description": {"type": "string"},
+                                    "gate": {
+                                        "type": "object",
+                                        "description": "Optional approval gate for this step.",
+                                        "properties": {
+                                            "id": {"type": "string"},
+                                            "question": {
+                                                "type": "string",
+                                                "description": "Approval question presented to the user.",
+                                            },
+                                            "choices": {
+                                                "type": "array",
+                                                "items": {"type": "string"},
+                                                "description": "Approval options (e.g. ['Approve', 'Reject', 'Request Changes']).",
+                                            },
+                                        },
+                                        "required": ["id", "question"],
+                                    },
+                                },
+                                "required": ["id", "name"],
+                            },
+                        },
+                    },
+                    "required": ["id", "name", "steps"],
+                },
+            },
+        },
+        "required": ["task_id", "name", "phases"],
+    },
+}
+
+TASK_STATUS_SCHEMA = {
+    "name": "sag_task_status",
+    "description": "Show the current status of a sag long term task — phase, step, pending gates, and recent artifacts.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "task_id": {
+                "type": "string",
+                "description": "Sag long term task identifier. Omit to use the currently active task.",
+            },
+            "verbose": {
+                "type": "boolean",
+                "default": False,
+                "description": "If True, include full phase/step tree and git log.",
+            },
+        },
+        "required": [],
+    },
+}
+
+TASK_PAUSE_SCHEMA = {
+    "name": "sag_task_pause",
+    "description": "Pause the active sag long term task and save a PausedExecutionContext snapshot. "
+    "The task can be resumed later with sag_task_resume. "
+    "This snapshots pending tool calls, artifacts, and session context so the agent "
+    "can recover mid-step without losing work.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "task_id": {"type": "string", "description": "Sag long term task to pause. Omit to pause the active task."},
+            "reason": {"type": "string", "description": "Reason for pausing (shown on resume)."},
+        },
+        "required": [],
+    },
+}
+
+TASK_RESUME_SCHEMA = {
+    "name": "sag_task_resume",
+    "description": "Resume a paused sag long term task from its PausedExecutionContext snapshot. "
+    "Restores pending tool calls, artifacts, and context. "
+    "After resuming, use sag_task_advance to proceed after an approval gate.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "task_id": {"type": "string", "description": "Sag long term task to resume. Omit to resume the active task."},
+        },
+        "required": [],
+    },
+}
+
+TASK_ADVANCE_SCHEMA = {
+    "name": "sag_task_advance",
+    "description": "Advance the sag long term task to the next Step or Phase after completing the current one. "
+    "Writes the updated task_state.json (per-step, not per-turn). "
+    "Creates a new git branch for the next step and commits the current work.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "task_id": {"type": "string", "description": "Sag long term task to advance. Omit for the active task."},
+            "commit_message": {
+                "type": "string",
+                "description": "Git commit message for the current step's work. "
+                "Defaults to 'WIP: <step_name> completed'.",
+            },
+            "artifacts_summary": {
+                "type": "string",
+                "description": "Brief summary of artifacts produced in this step (for sag long term task_state).",
+            },
+        },
+        "required": [],
+    },
+}
+
+TASK_APPROVE_SCHEMA = {
+    "name": "sag_task_approve",
+    "description": "Submit an approval decision for a pending gate. "
+    "Used when a user approves/rejects a step or requests changes. "
+    "After approval, the sag long term task status is updated and the approver's decision is recorded.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "task_id": {"type": "string", "description": "Sag long term task with pending gate. Omit for the active task."},
+            "gate_id": {"type": "string", "description": "The gate ID to approve (from task_status pending_gates)."},
+            "decision": {
+                "type": "string",
+                "description": "One of the gate's allowed choices (e.g. 'Approve', 'Reject').",
+                "enum": ["Approve", "Reject", "Request Changes"],
+            },
+            "comment": {"type": "string", "description": "Optional comment from the approver."},
+        },
+        "required": ["gate_id", "decision"],
+    },
+}
+
+TASK_LIST_SCHEMA = {
+    "name": "sag_task_list",
+    "description": "List all sag long term tasks under ~/.hermes/sag_tasks/, showing task_id, status, current phase/step, and last active time.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "status_filter": {
+                "type": "string",
+                "description": "Filter by status: 'active', 'paused', 'completed', 'all'. " "Defaults to 'all'.",
+            },
+        },
+        "required": [],
+    },
+}
+
+TASK_COMMIT_SCHEMA = {
+    "name": "sag_task_commit",
+    "description": "Commit current working state to the sag long term task's Git repo. "
+    "Auto-stages all tracked files. Use before sag_task_advance or sag_task_pause to persist work.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "task_id": {"type": "string", "description": "Sag long term task whose repo to commit. Omit for the active task."},
+            "message": {
+                "type": "string",
+                "description": "Commit message. Should follow: '[Step N] <description>'.",
+            },
+        },
+        "required": ["message"],
+    },
+}
+
+TASK_BRANCH_SCHEMA = {
+    "name": "sag_task_branch",
+    "description": "Create a new Git branch for the next step of the sag long term task. "
+    "The branch name follows: step/<phase_id>/<step_id>-<short-description>. "
+    "Automatically switches to the new branch.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "task_id": {"type": "string", "description": "Sag long term task whose repo to branch. Omit for the active task."},
+            "branch_name": {
+                "type": "string",
+                "description": "Full branch name (e.g. 'step/phase-2/step-3-bom-engine'). "
+                "Omit to auto-generate from current step context.",
+            },
+        },
+        "required": [],
+    },
+}
+
+TASK_GIT_LOG_SCHEMA = {
+    "name": "sag_task_git_log",
+    "description": "Show the Git commit history for a sag long term task, most recent first.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "task_id": {"type": "string", "description": "Sag long term task whose git log to show. Omit for the active task."},
+            "max_count": {
+                "type": "integer",
+                "default": 20,
+                "description": "Maximum number of commits to return.",
+            },
+        },
+        "required": [],
+    },
+}
+
+TASK_RELATE_SCHEMA = {
+    "name": "sag_task_relate",
+    "description": "Declare a cross-pollination relationship between this sag long term task and another. "
+    "Use this when two tasks share the same research theme but follow different research paths "
+    "and their artifacts may inspire each other. "
+    "Relationships are stored in task_state.json. Max 2 cross-pollination relationships per task.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "task_id": {"type": "string", "description": "Sag long term task to add a relationship to. Omit for the active task."},
+            "related_task_id": {"type": "string", "description": "The task_id of the related sag long term task to link."},
+            "relationship": {
+                "type": "string",
+                "description": "Relationship type. Use 'cross-pollination' for medium-strength "
+                "same-theme-different-path relationships.",
+                "enum": ["cross-pollination"],
+            },
+            "action": {"type": "string", "description": "'add' to add a relationship, 'remove' to remove it.", "enum": ["add", "remove"]},
+        },
+        "required": ["related_task_id", "relationship", "action"],
+    },
+}
+
+ALL_TOOL_SCHEMAS = [
+    TASK_CREATE_SCHEMA,
+    TASK_STATUS_SCHEMA,
+    TASK_PAUSE_SCHEMA,
+    TASK_RESUME_SCHEMA,
+    TASK_ADVANCE_SCHEMA,
+    TASK_APPROVE_SCHEMA,
+    TASK_LIST_SCHEMA,
+    TASK_COMMIT_SCHEMA,
+    TASK_BRANCH_SCHEMA,
+    TASK_GIT_LOG_SCHEMA,
+    TASK_RELATE_SCHEMA,
+]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Singleton instance — set by register(), used by tool handlers
+# ─────────────────────────────────────────────────────────────────────────────
+
+_sagtask_instance: Optional["SagTaskPlugin"] = None
+
+
+def _get_provider() -> "SagTaskPlugin":
+    """Get the registered SagTaskPlugin instance (set by register())."""
+    if _sagtask_instance is None:
+        raise RuntimeError("SagTaskPlugin not registered. Call register(ctx) first.")
+    return _sagtask_instance
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SagTaskPlugin (must be defined before handlers below, since handlers reference it)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class SagTaskPlugin:
+    """Long-running task management with per-task Git repos and approval gates."""
+
+    MAX_ARTIFACT_SUMMARIES = 3
+    SUMMARY_TRUNCATE_AT = 200
+
+    def __init__(self):
+        self._hermes_home: Optional[Path] = None
+        self._projects_root: Optional[Path] = None
+        self._active_task_id: Optional[str] = None
+        self._active_execution_id: Optional[str] = None
+        self._prefetch_result: str = ""
+        self._prefetch_lock = threading.Lock()
+
+    @property
+    def name(self) -> str:
+        return SAGTASK_PROVIDER
+
+    def is_available(self) -> bool:
+        """Always available — local storage only, no credentials needed."""
+        return True
+
+    def initialize(self, session_id: str, **kwargs) -> None:
+        hermes_home = kwargs.get("hermes_home")
+        if not hermes_home:
+            hermes_home = Path.home() / ".hermes"
+        else:
+            hermes_home = Path(hermes_home)
+        self._hermes_home = hermes_home
+        self._projects_root = hermes_home / "sagtask"
+        self._projects_root.mkdir(parents=True, exist_ok=True)
+        self._restore_active_task()
+        logger.debug(
+            "SagTaskPlugin initialized, projects_root=%s, active_task=%s",
+            self._projects_root,
+            self._active_task_id,
+        )
+
+    def get_task_root(self, task_id: str) -> Path:
+        return self._projects_root / task_id
+
+    def get_task_state_path(self, task_id: str) -> Path:
+        return self.get_task_root(task_id) / ".sag_task_state.json"
+
+    def get_gitignore_path(self, task_id: str) -> Path:
+        return self.get_task_root(task_id) / ".gitignore"
+
+    def ensure_git_repo(self, task_id: str) -> bool:
+        task_root = self.get_task_root(task_id)
+        git_dir = task_root / ".git"
+        if git_dir.exists():
+            return True
+        gitignore = self.get_gitignore_path(task_id)
+        if not gitignore.exists():
+            task_root.mkdir(parents=True, exist_ok=True)
+            gitignore.write_text(".sag_task_state.json\n.sag_artifacts/\n.sag_executions/\n__pycache__/\n*.pyc\n")
+        result = subprocess.run(["git", "init"], cwd=str(task_root), capture_output=True, text=True)
+        if result.returncode != 0:
+            logger.error("git init failed for %s: %s", task_root, result.stderr)
+            return False
+        remote_url = f"git@github.com:charlenchen/{task_id}.git"
+        subprocess.run(["git", "remote", "add", "origin", remote_url], cwd=str(task_root), capture_output=True)
+        subprocess.run(["git", "add", ".gitignore"], cwd=str(task_root), capture_output=True)
+        subprocess.run(["git", "commit", "-m", "Initial commit"], cwd=str(task_root), capture_output=True)
+        logger.info("Git repo initialized for task %s", task_id)
+        return True
+
+    def create_github_repo(self, task_id: str) -> bool:
+        result = subprocess.run(["gh", "repo", "view", f"charlenchen/{task_id}"], capture_output=True, text=True)
+        if result.returncode == 0:
+            logger.debug("GitHub repo charlenchen/%s already exists", task_id)
+            return True
+        result = subprocess.run(
+            ["gh", "repo", "create", task_id, "--source", str(self.get_task_root(task_id)), "--push"],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            logger.error("Failed to create GitHub repo charlenchen/%s: %s", task_id, result.stderr)
+            return False
+        logger.info("GitHub repo created: charlenchen/%s", task_id)
+        return True
+
+    def git_push(self, task_id: str, branch: str = "main") -> bool:
+        task_root = str(self.get_task_root(task_id))
+        result = subprocess.run(["git", "push", "-u", "origin", branch], cwd=task_root, capture_output=True, text=True)
+        if result.returncode != 0:
+            if "Repository not found" in result.stderr or "does not exist" in result.stderr:
+                if self.create_github_repo(task_id):
+                    result = subprocess.run(
+                        ["git", "push", "-u", "origin", branch], cwd=task_root, capture_output=True, text=True
+                    )
+            if result.returncode != 0:
+                logger.error("git push failed for task %s: %s", task_id, result.stderr)
+                return False
+        return True
+
+    def git_branch(self, task_id: str, branch_name: str) -> bool:
+        task_root = str(self.get_task_root(task_id))
+        for cmd in [["git", "checkout", "-b", branch_name], ["git", "push", "-u", "origin", branch_name]]:
+            result = subprocess.run(cmd, cwd=task_root, capture_output=True, text=True)
+            if result.returncode != 0:
+                logger.error("git branch command failed: %s", result.stderr)
+                return False
+        return True
+
+    def git_checkout(self, task_id: str, branch: str) -> bool:
+        result = subprocess.run(
+            ["git", "checkout", branch], cwd=str(self.get_task_root(task_id)), capture_output=True, text=True
+        )
+        return result.returncode == 0
+
+    def git_log(self, task_id: str, max_count: int = 20) -> List[Dict[str, str]]:
+        result = subprocess.run(
+            ["git", "log", f"--max-count={max_count}", "--oneline"],
+            cwd=str(self.get_task_root(task_id)),
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            return []
+        return [
+            {"hash": line.split()[0], "message": " ".join(line.split()[1:])}
+            for line in result.stdout.strip().split("\n")
+            if line
+        ]
+
+    def _restore_active_task(self) -> None:
+        marker = self._projects_root / ".active_task"
+        if marker.exists():
+            task_id = marker.read_text().strip()
+            if task_id and self.get_task_state_path(task_id).exists():
+                self._active_task_id = task_id
+
+    def _set_active_task(self, task_id: Optional[str]) -> None:
+        self._active_task_id = task_id
+        marker = self._projects_root / ".active_task"
+        if task_id:
+            marker.write_text(task_id)
+        elif marker.exists():
+            marker.unlink()
+
+    def load_task_state(self, task_id: str) -> Optional[Dict[str, Any]]:
+        path = self.get_task_state_path(task_id)
+        if not path.exists():
+            return None
+        try:
+            return json.loads(path.read_text())
+        except (json.JSONDecodeError, OSError) as e:
+            logger.error("Failed to load task_state for %s: %s", task_id, e)
+            return None
+
+    def save_task_state(self, task_id: str, state: Dict[str, Any]) -> None:
+        path = self.get_task_state_path(task_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(state, indent=2, ensure_ascii=False))
+        logger.debug("task_state.json written for task %s", task_id)
+
+    def system_prompt_block(self) -> str:
+        if not self._active_task_id:
+            return ""
+        state = self.load_task_state(self._active_task_id)
+        if not state:
+            return ""
+        status = state.get("status", "unknown")
+        current_phase = self._get_current_phase(state)
+        current_step = self._get_current_step(state)
+        pending_gates = state.get("pending_gates", [])
+        lines = [
+            "# SagTask — Active Task",
+            f"Task: `{self._active_task_id}`  Status: **{status}**",
+            f"Phase: {current_phase}  Step: {current_step}",
+        ]
+        if pending_gates:
+            lines.append(f"⏳ Awaiting approval: {', '.join(pending_gates)}")
+        lines.append("")
+        lines.append("Use `sag_task_status`, `sag_task_pause`, `sag_task_advance`, or `sag_task_approve` to manage this sag long term task.")
+        return "\n".join(lines)
+
+    def prefetch(self, query: str, *, session_id: str = "") -> str:
+        if not self._active_task_id:
+            return ""
+        with self._prefetch_lock:
+            return self._prefetch_result
+
+    def sync_turn(self, user_content: str, assistant_content: str, *, session_id: str = "") -> None:
+        pass
+
+    def get_tool_schemas(self) -> List[Dict[str, Any]]:
+        return ALL_TOOL_SCHEMAS
+
+    def handle_tool_call(self, tool_name: str, args: Dict[str, Any], **kwargs) -> str:
+        """Dispatch a tool call to the appropriate handler."""
+        handler_map = {
+            "sag_task_create": _handle_task_create,
+            "sag_task_status": _handle_task_status,
+            "sag_task_pause": _handle_task_pause,
+            "sag_task_resume": _handle_task_resume,
+            "sag_task_advance": _handle_task_advance,
+            "sag_task_approve": _handle_task_approve,
+            "sag_task_list": _handle_task_list,
+            "sag_task_commit": _handle_task_commit,
+            "sag_task_branch": _handle_task_branch,
+            "sag_task_git_log": _handle_task_git_log,
+            "sag_task_relate": _handle_task_relate,
+        }
+        handler = handler_map.get(tool_name)
+        if not handler:
+            return json.dumps({"error": f"Unknown tool: {tool_name}"})
+        result = handler(args)
+        return json.dumps(result, ensure_ascii=False)
+
+    def shutdown(self) -> None:
+        logger.debug("SagTaskPlugin shutting down")
+
+    # ── Optional hooks ────────────────────────────────────────────────────────
+
+    def on_turn_start(self, turn_number: int, message: str, **kwargs) -> None:
+        if not self._active_task_id:
+            return
+        state = self.load_task_state(self._active_task_id)
+        if not state:
+            return
+        status = state.get("status", "unknown")
+        current_phase = self._get_current_phase(state)
+        current_step = self._get_current_step(state)
+        pending_gates = state.get("pending_gates", [])
+        artifacts = state.get("artifacts_summary", "")
+        lines = [f"## Active Task: {self._active_task_id}"]
+        lines.append(f"- Status: **{status}**")
+        lines.append(f"- Phase: {current_phase}  |  Step: {current_step}")
+        if pending_gates:
+            lines.append(f"- ⏳ Awaiting approval: {', '.join(pending_gates)}")
+        if artifacts:
+            lines.append(f"- Recent artifacts: {artifacts}")
+        cross_context = self._build_cross_pollination_context(state)
+        if cross_context:
+            lines.append("")
+            lines.append(cross_context)
+        with self._prefetch_lock:
+            self._prefetch_result = "\n".join(lines)
+
+    def _build_cross_pollination_context(self, state: Dict[str, Any]) -> str:
+        relationships = state.get("relationships", [])
+        cross_tasks = [r for r in relationships if r.get("relationship") == "cross-pollination"]
+        if not cross_tasks:
+            return ""
+        cross_tasks = cross_tasks[:2]
+        lines = ["## Related Task Context (Cross-Pollination)"]
+        for rel in cross_tasks:
+            related_id = rel.get("task_id")
+            summaries = self._generate_artifact_summaries(related_id)
+            if not summaries:
+                continue
+            lines.append(f"\n### {related_id}")
+            for s in summaries[:3]:
+                path = s.get("path", "")
+                summary = s.get("summary", "")
+                lines.append(f"[{path}]")
+                lines.append(summary)
+            lines.append(f"→ Use `sag_task_status(task_id=\"{related_id}\")` to see full context")
+        overflow = len(cross_tasks) - 2
+        if overflow > 0:
+            lines.append(f"\n...and {overflow} more related task(s)")
+        return "\n".join(lines)
+
+    def on_session_end(self, messages: List[Dict[str, Any]]) -> None:
+        pass
+
+    def on_pre_compress(self, messages: List[Dict[str, Any]]) -> str:
+        if not self._active_task_id:
+            return ""
+        state = self.load_task_state(self._active_task_id)
+        if not state:
+            return ""
+        current_phase = self._get_current_phase(state)
+        current_step = self._get_current_step(state)
+        status = state.get("status", "unknown")
+        pending_gates = state.get("pending_gates", [])
+        lines = [
+            f"[SagTask] Active task `{self._active_task_id}` — status: {status}, "
+            f"phase: {current_phase}, step: {current_step}"
+        ]
+        if pending_gates:
+            lines.append(f"  Pending approval gates: {', '.join(pending_gates)}")
+        return "\n".join(lines)
+
+    def on_memory_write(self, action: str, target: str, content: str) -> None:
+        if not self._active_task_id:
+            return
+        docs_dir = self.get_task_root(self._active_task_id) / "docs"
+        docs_dir.mkdir(parents=True, exist_ok=True)
+        filename = re.sub(r"[^a-zA-Z0-9_-]", "_", f"{target}_{action}_{len(content)}.md")
+        (docs_dir / filename).write_text(content)
+
+    # ── State helpers ───────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _get_current_phase(state: Dict[str, Any]) -> str:
+        phases = state.get("phases", [])
+        current = state.get("current_phase_id", "")
+        for p in phases:
+            if p.get("id") == current:
+                return p.get("name", current)
+        return current or "—"
+
+    @staticmethod
+    def _get_current_step(state: Dict[str, Any]) -> str:
+        phases = state.get("phases", [])
+        current_phase_id = state.get("current_phase_id", "")
+        for p in phases:
+            if p.get("id") == current_phase_id:
+                steps = p.get("steps", [])
+                current_step_id = state.get("current_step_id", "")
+                for s in steps:
+                    if s.get("id") == current_step_id:
+                        return s.get("name", current_step_id)
+                if steps:
+                    return steps[0].get("name", "—")
+        return current_step_id or "—"
+
+    def _generate_artifact_summaries(self, task_id: str, force: bool = False) -> List[Dict[str, Any]]:
+        state = self.load_task_state(task_id)
+        if not state:
+            return []
+        if not force:
+            cached = state.get("artifact_summaries", [])
+            if cached:
+                return cached
+        task_root = self.get_task_root(task_id)
+        artifacts_dir = task_root / ".sag_artifacts"
+        if not artifacts_dir.exists():
+            return []
+        files = sorted(artifacts_dir.rglob("*"), key=lambda p: p.stat().st_mtime, reverse=True)
+        files = [f for f in files if f.is_file()][: self.MAX_ARTIFACT_SUMMARIES]
+        summaries = [self._summarize_artifact_file(f, task_id) for f in files]
+        state["artifact_summaries"] = summaries
+        self.save_task_state(task_id, state)
+        return summaries
+
+    def _summarize_artifact_file(self, path: Path, task_id: str) -> Dict[str, str]:
+        try:
+            size = path.stat().st_size
+        except OSError:
+            size = 0
+        task_root = self.get_task_root(task_id)
+        try:
+            rel_path = str(path.relative_to(task_root))
+        except ValueError:
+            rel_path = str(path)
+        text_extensions = {".md", ".py", ".yaml", ".yml", ".json", ".txt", ".csv", ".log"}
+        if path.suffix.lower() in text_extensions:
+            try:
+                content = path.read_text(encoding="utf-8", errors="replace")
+                lines = [l.strip() for l in content.splitlines() if l.strip()]
+                sample = lines[0] if lines else content[: self.SUMMARY_TRUNCATE_AT]
+                if len(sample) > self.SUMMARY_TRUNCATE_AT:
+                    sample = sample[: self.SUMMARY_TRUNCATE_AT] + "…"
+                summary_text = sample or "(empty file)"
+            except OSError:
+                summary_text = f"File, {size} bytes"
+        else:
+            summary_text = f"Binary file, {size} bytes"
+        return {
+            "path": rel_path,
+            "summary": summary_text,
+            "generated_at": datetime.utcnow().isoformat() + "Z",
+        }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Tool handlers — all inlined here (no providers/ subpackage needed)
+# Each accesses the singleton via _get_provider()
+# ─────────────────────────────────────────────────────────────────────────────
+
+MAX_CROSS_POLLINATION = 2
+
+
+def _handle_task_create(args: Dict[str, Any]) -> Dict[str, Any]:
+    p = _get_provider()
+    task_id = args["task_id"]
+    name = args["name"]
+    description = args.get("description", "")
+    phases = args.get("phases", [])
+
+    task_root = p.get_task_root(task_id)
+    task_root.mkdir(parents=True, exist_ok=True)
+
+    state = {
+        "task_id": task_id,
+        "name": name,
+        "description": description,
+        "status": "active",
+        "created_at": datetime.utcnow().isoformat() + "Z",
+        "updated_at": datetime.utcnow().isoformat() + "Z",
+        "current_phase_id": phases[0]["id"] if phases else "",
+        "current_step_id": phases[0]["steps"][0]["id"] if phases and phases[0].get("steps") else "",
+        "phases": phases,
+        "pending_gates": [],
+        "artifacts_summary": "",
+        "decisions": [],
+        "executions": [],
+        "relationships": [],
+        "artifact_summaries": [],
+    }
+
+    p.save_task_state(task_id, state)
+
+    gitignore = p.get_gitignore_path(task_id)
+    gitignore.write_text(".sag_task_state.json\n.sag_artifacts/\n.sag_executions/\n__pycache__/\n*.pyc\n")
+
+    p.ensure_git_repo(task_id)
+    p.create_github_repo(task_id)
+    p.git_push(task_id, branch="main")
+    p._set_active_task(task_id)
+
+    return {
+        "ok": True,
+        "task_id": task_id,
+        "name": name,
+        "status": "active",
+        "current_phase": state["current_phase_id"],
+        "current_step": state["current_step_id"],
+        "message": f"Task '{name}' created with {len(phases)} phase(s). Git repo initialized.",
+    }
+
+
+def _handle_task_status(args: Dict[str, Any]) -> Dict[str, Any]:
+    p = _get_provider()
+    task_id = args.get("task_id") or p._active_task_id
+    verbose = args.get("verbose", False)
+
+    if not task_id:
+        return {"ok": False, "error": "No active task. Use task_list to find a task."}
+
+    state = p.load_task_state(task_id)
+    if not state:
+        return {"ok": False, "error": f"Task '{task_id}' not found."}
+
+    current_phase = p._get_current_phase(state)
+    current_step = p._get_current_step(state)
+
+    result = {
+        "ok": True,
+        "task_id": task_id,
+        "name": state.get("name"),
+        "description": state.get("description"),
+        "status": state.get("status"),
+        "current_phase": current_phase,
+        "current_step": current_step,
+        "pending_gates": state.get("pending_gates", []),
+        "artifacts_summary": state.get("artifacts_summary", ""),
+        "relationships": state.get("relationships", []),
+        "artifact_summaries": state.get("artifact_summaries", []),
+    }
+
+    if verbose:
+        result["phases"] = state.get("phases", [])
+        result["decisions"] = state.get("decisions", [])
+        result["git_log"] = p.git_log(task_id)
+
+        task_root = p.get_task_root(task_id)
+        executions_dir = task_root / ".sag_executions"
+        paused = []
+        if executions_dir.exists():
+            for f in executions_dir.glob("*.json"):
+                data = json.loads(f.read_text())
+                if data.get("status") == "paused":
+                    paused.append(data.get("execution_id"))
+        result["paused_executions"] = paused
+
+    return result
+
+
+def _handle_task_pause(args: Dict[str, Any]) -> Dict[str, Any]:
+    p = _get_provider()
+    task_id = args.get("task_id") or p._active_task_id
+    reason = args.get("reason", "")
+
+    if not task_id:
+        return {"ok": False, "error": "No active task."}
+
+    state = p.load_task_state(task_id)
+    if not state:
+        return {"ok": False, "error": f"Task '{task_id}' not found."}
+
+    execution_id = f"exec-{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}"
+
+    paused_ctx = {
+        "execution_id": execution_id,
+        "task_id": task_id,
+        "status": "paused",
+        "paused_at": datetime.utcnow().isoformat() + "Z",
+        "reason": reason,
+        "gate_id": state.get("current_gate_id", ""),
+        "step_id": state.get("current_step_id", ""),
+        "phase_id": state.get("current_phase_id", ""),
+        "pending_tool_calls": [],
+        "pending_tool_results": [],
+        "artifacts_summary": state.get("artifacts_summary", ""),
+        "session_context_summary": reason or "Paused by user request",
+    }
+
+    task_root = p.get_task_root(task_id)
+    executions_dir = task_root / ".sag_executions"
+    executions_dir.mkdir(parents=True, exist_ok=True)
+    (executions_dir / f"{execution_id}.json").write_text(json.dumps(paused_ctx, indent=2, ensure_ascii=False))
+
+    state["status"] = "paused"
+    state["updated_at"] = datetime.utcnow().isoformat() + "Z"
+    state["executions"] = state.get("executions", []) + [execution_id]
+    p.save_task_state(task_id, state)
+
+    return {
+        "ok": True,
+        "task_id": task_id,
+        "execution_id": execution_id,
+        "status": "paused",
+        "message": f"Task paused. Use task_resume('{task_id}') to continue.",
+    }
+
+
+def _handle_task_resume(args: Dict[str, Any]) -> Dict[str, Any]:
+    p = _get_provider()
+    task_id = args.get("task_id") or p._active_task_id
+
+    if not task_id:
+        return {"ok": False, "error": "No active task."}
+
+    task_root = p.get_task_root(task_id)
+    executions_dir = task_root / ".sag_executions"
+
+    if not executions_dir.exists():
+        return {"ok": False, "error": f"No paused executions found for task '{task_id}'."}
+
+    paused_files = sorted(executions_dir.glob("*.json"), reverse=True)
+    paused_ctx = None
+    resume_execution_id = None
+    for f in paused_files:
+        data = json.loads(f.read_text())
+        if data.get("status") == "paused":
+            paused_ctx = data
+            resume_execution_id = f.stem
+            break
+
+    if not paused_ctx:
+        return {"ok": False, "error": "No paused execution found."}
+
+    state = p.load_task_state(task_id)
+    state["status"] = "active"
+    state["current_phase_id"] = paused_ctx.get("phase_id", state.get("current_phase_id"))
+    state["current_step_id"] = paused_ctx.get("step_id", state.get("current_step_id"))
+    state["updated_at"] = datetime.utcnow().isoformat() + "Z"
+
+    paused_ctx["status"] = "resumed"
+    paused_ctx["resumed_at"] = datetime.utcnow().isoformat() + "Z"
+    (executions_dir / f"{resume_execution_id}.json").write_text(json.dumps(paused_ctx, indent=2, ensure_ascii=False))
+
+    p.save_task_state(task_id, state)
+    p._set_active_task(task_id)
+
+    return {
+        "ok": True,
+        "task_id": task_id,
+        "execution_id": resume_execution_id,
+        "status": "active",
+        "current_phase": paused_ctx.get("phase_id"),
+        "current_step": paused_ctx.get("step_id"),
+        "recovery_instruction": paused_ctx.get("session_context_summary", ""),
+        "message": f"Task resumed from execution {resume_execution_id}.",
+    }
+
+
+def _handle_task_advance(args: Dict[str, Any]) -> Dict[str, Any]:
+    p = _get_provider()
+    task_id = args.get("task_id") or p._active_task_id
+    commit_message = args.get("commit_message", "")
+    artifacts_summary = args.get("artifacts_summary", "")
+
+    if not task_id:
+        return {"ok": False, "error": "No active task."}
+
+    state = p.load_task_state(task_id)
+    if not state:
+        return {"ok": False, "error": f"Task '{task_id}' not found."}
+
+    phases = state.get("phases", [])
+    current_phase_id = state.get("current_phase_id", "")
+    current_step_id = state.get("current_step_id", "")
+
+    phase_idx = next((i for i, ph in enumerate(phases) if ph.get("id") == current_phase_id), -1)
+    if phase_idx == -1:
+        return {"ok": False, "error": f"Phase '{current_phase_id}' not found."}
+
+    steps = phases[phase_idx].get("steps", [])
+    step_idx = next((i for i, s in enumerate(steps) if s.get("id") == current_step_id), -1)
+
+    next_phase_id = current_phase_id
+    next_step_id = current_step_id
+
+    if step_idx < len(steps) - 1:
+        next_step_id = steps[step_idx + 1]["id"]
+    elif phase_idx < len(phases) - 1:
+        next_phase_id = phases[phase_idx + 1]["id"]
+        next_step_id = phases[phase_idx + 1]["steps"][0]["id"] if phases[phase_idx + 1].get("steps") else ""
+    else:
+        state["status"] = "completed"
+        state["updated_at"] = datetime.utcnow().isoformat() + "Z"
+        p.save_task_state(task_id, state)
+        return {
+            "ok": True,
+            "task_id": task_id,
+            "status": "completed",
+            "message": "All phases completed. Task finished!",
+        }
+
+    task_root = p.get_task_root(task_id)
+    if (task_root / ".git").exists():
+        short_name = current_step_id or "current"
+        msg = commit_message or f"WIP: [{short_name}] {steps[step_idx].get('name', '')}"
+        try:
+            subprocess.run(["git", "add", "-A"], cwd=str(task_root), capture_output=True)
+            subprocess.run(["git", "commit", "-m", msg], cwd=str(task_root), capture_output=True, text=True)
+        except Exception:
+            pass
+
+    state["current_phase_id"] = next_phase_id
+    state["current_step_id"] = next_step_id
+    state["updated_at"] = datetime.utcnow().isoformat() + "Z"
+    if artifacts_summary:
+        state["artifacts_summary"] = artifacts_summary
+    p.save_task_state(task_id, state)
+
+    branch_name = f"step/{next_phase_id}/{next_step_id}"
+    p.git_branch(task_id, branch_name)
+
+    return {
+        "ok": True,
+        "task_id": task_id,
+        "previous_phase": current_phase_id,
+        "previous_step": current_step_id,
+        "current_phase": next_phase_id,
+        "current_step": next_step_id,
+        "message": f"Advanced to {next_phase_id}/{next_step_id}. New branch '{branch_name}' created.",
+    }
+
+
+def _handle_task_approve(args: Dict[str, Any]) -> Dict[str, Any]:
+    p = _get_provider()
+    task_id = args.get("task_id") or p._active_task_id
+    gate_id = args.get("gate_id")
+    decision = args.get("decision")
+    comment = args.get("comment", "")
+
+    if not task_id:
+        return {"ok": False, "error": "No active task."}
+    if not gate_id:
+        return {"ok": False, "error": "gate_id is required."}
+    if not decision:
+        return {"ok": False, "error": "decision is required."}
+
+    state = p.load_task_state(task_id)
+    if not state:
+        return {"ok": False, "error": f"Task '{task_id}' not found."}
+
+    approval_record = {
+        "gate_id": gate_id,
+        "decision": decision,
+        "comment": comment,
+        "approved_at": datetime.utcnow().isoformat() + "Z",
+    }
+
+    pending = [g for g in state.get("pending_gates", []) if g != gate_id]
+    state["pending_gates"] = pending
+    state["updated_at"] = datetime.utcnow().isoformat() + "Z"
+    state["decisions"] = state.get("decisions", []) + [approval_record]
+    p.save_task_state(task_id, state)
+
+    if decision == "Approve":
+        return _handle_task_advance({"task_id": task_id, "commit_message": f"[Gate {gate_id}] Approved: {comment}"})
+
+    return {
+        "ok": True,
+        "task_id": task_id,
+        "gate_id": gate_id,
+        "decision": decision,
+        "message": f"Gate '{gate_id}' recorded as '{decision}'.",
+    }
+
+
+def _handle_task_list(args: Dict[str, Any]) -> Dict[str, Any]:
+    p = _get_provider()
+    status_filter = args.get("status_filter", "all")
+    projects_root = p._projects_root
+
+    tasks = []
+    if not projects_root.exists():
+        return {"ok": True, "tasks": []}
+
+    for task_dir in sorted(projects_root.iterdir()):
+        if task_dir.is_dir() and not task_dir.name.startswith("."):
+            task_id = task_dir.name
+            state = p.load_task_state(task_id)
+            if not state:
+                continue
+            status = state.get("status", "unknown")
+            if status_filter != "all" and status != status_filter:
+                continue
+            tasks.append({
+                "task_id": task_id,
+                "name": state.get("name"),
+                "status": status,
+                "current_phase": p._get_current_phase(state),
+                "current_step": p._get_current_step(state),
+                "updated_at": state.get("updated_at", ""),
+            })
+
+    return {"ok": True, "tasks": tasks}
+
+
+def _handle_task_commit(args: Dict[str, Any]) -> Dict[str, Any]:
+    p = _get_provider()
+    task_id = args.get("task_id") or p._active_task_id
+    message = args.get("message", "")
+
+    if not task_id:
+        return {"ok": False, "error": "No active task."}
+
+    task_root = p.get_task_root(task_id)
+    git_dir = task_root / ".git"
+    if not git_dir.exists():
+        return {"ok": False, "error": f"Task '{task_id}' is not a Git repo. Run task_advance to initialize."}
+
+    subprocess.run(["git", "add", "-A"], cwd=str(task_root), capture_output=True)
+    result = subprocess.run(["git", "commit", "-m", message], cwd=str(task_root), capture_output=True, text=True)
+
+    if result.returncode != 0:
+        return {"ok": False, "error": f"Git commit failed: {result.stderr}"}
+
+    return {
+        "ok": True,
+        "task_id": task_id,
+        "message": message,
+        "commit_hash": result.stdout.strip(),
+    }
+
+
+def _handle_task_branch(args: Dict[str, Any]) -> Dict[str, Any]:
+    p = _get_provider()
+    task_id = args.get("task_id") or p._active_task_id
+    branch_name = args.get("branch_name")
+
+    if not task_id:
+        return {"ok": False, "error": "No active task."}
+
+    if not branch_name:
+        state = p.load_task_state(task_id)
+        if not state:
+            return {"ok": False, "error": f"Task '{task_id}' not found."}
+        branch_name = f"step/{state.get('current_phase_id')}/{state.get('current_step_id')}"
+
+    success = p.git_branch(task_id, branch_name)
+    if not success:
+        return {"ok": False, "error": f"Failed to create branch '{branch_name}'."}
+
+    return {
+        "ok": True,
+        "task_id": task_id,
+        "branch_name": branch_name,
+        "message": f"Branch '{branch_name}' created and checked out.",
+    }
+
+
+def _handle_task_git_log(args: Dict[str, Any]) -> Dict[str, Any]:
+    p = _get_provider()
+    task_id = args.get("task_id") or p._active_task_id
+    max_count = args.get("max_count", 20)
+
+    if not task_id:
+        return {"ok": False, "error": "No active task."}
+
+    log = p.git_log(task_id, max_count=max_count)
+    return {"ok": True, "task_id": task_id, "commits": log}
+
+
+def _handle_task_relate(args: Dict[str, Any]) -> Dict[str, Any]:
+    p = _get_provider()
+    task_id = args.get("task_id") or p._active_task_id
+    related_task_id = args.get("related_task_id")
+    relationship = args.get("relationship")
+    action = args.get("action")
+
+    if not task_id:
+        return {"ok": False, "error": "No active task."}
+
+    state = p.load_task_state(task_id)
+    if not state:
+        return {"ok": False, "error": f"Task '{task_id}' not found."}
+
+    if action == "list":
+        rels = state.get("relationships", [])
+        return {"ok": True, "task_id": task_id, "relationships": rels}
+
+    if not related_task_id:
+        return {"ok": False, "error": "related_task_id is required."}
+    if not relationship:
+        return {"ok": False, "error": "relationship is required."}
+    if action not in ("add", "remove"):
+        return {"ok": False, "error": "action must be 'add' or 'remove'."}
+
+    related_state = p.load_task_state(related_task_id)
+    if not related_state:
+        return {"ok": False, "error": f"Related task '{related_task_id}' not found."}
+
+    relationships = state.get("relationships", [])
+
+    if action == "add":
+        cross_poll_count = sum(1 for r in relationships if r.get("relationship") == "cross-pollination")
+        if cross_poll_count >= MAX_CROSS_POLLINATION:
+            return {
+                "ok": False,
+                "error": f"Max {MAX_CROSS_POLLINATION} cross-pollination relationships allowed. "
+                f"Use task_relate with action='remove' to remove one first.",
+            }
+        existing = [r for r in relationships if r.get("task_id") == related_task_id]
+        if existing:
+            return {"ok": False, "error": f"Task '{related_task_id}' is already in the relationships list."}
+        relationships.append({"task_id": related_task_id, "relationship": relationship})
+
+    elif action == "remove":
+        before = len(relationships)
+        relationships = [r for r in relationships if r.get("task_id") != related_task_id]
+        if len(relationships) == before:
+            return {"ok": False, "error": f"Task '{related_task_id}' was not in the relationships list."}
+
+    state["relationships"] = relationships
+    state["updated_at"] = datetime.utcnow().isoformat() + "Z"
+    p.save_task_state(task_id, state)
+
+    return {
+        "ok": True,
+        "task_id": task_id,
+        "relationship": relationship,
+        "related_task_id": related_task_id,
+        "action": action,
+        "total_relationships": len(relationships),
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Handler dispatch map — used by register() to call ctx.register_tool()
+# ─────────────────────────────────────────────────────────────────────────────
+
+_tool_handlers = {
+    "task_create": _handle_task_create,
+    "task_status": _handle_task_status,
+    "task_pause": _handle_task_pause,
+    "task_resume": _handle_task_resume,
+    "task_advance": _handle_task_advance,
+    "task_approve": _handle_task_approve,
+    "task_list": _handle_task_list,
+    "task_commit": _handle_task_commit,
+    "task_branch": _handle_task_branch,
+    "task_git_log": _handle_task_git_log,
+    "task_relate": _handle_task_relate,
+}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Hook callbacks — registered via ctx.register_hook()
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _on_pre_llm_call(
+    session_id: str,
+    user_message: str,
+    conversation_history: List[Any],
+    is_first_turn: bool,
+    model: str,
+    platform: str,
+    sender_id: str,
+    **kwargs,
+) -> Dict[str, Any]:
+    """pre_llm_call hook — inject task context before each LLM call.
+
+    Returns {"context": "..."} to be appended to the user message,
+    or {} to skip injection.
+    """
+    p = _get_provider()
+
+    # Ensure projects root is initialized
+    if p._projects_root is None:
+        hermes_home = kwargs.get("hermes_home")
+        if hermes_home:
+            p._hermes_home = Path(hermes_home)
+        else:
+            p._hermes_home = Path.home() / ".hermes"
+        p._projects_root = p._hermes_home / "sagtask"
+        p._projects_root.mkdir(parents=True, exist_ok=True)
+        p._restore_active_task()
+
+    if not p._active_task_id:
+        return {}
+
+    state = p.load_task_state(p._active_task_id)
+    if not state:
+        return {}
+
+    status = state.get("status", "unknown")
+    current_phase = p._get_current_phase(state)
+    current_step = p._get_current_step(state)
+    pending_gates = state.get("pending_gates", [])
+    artifacts = state.get("artifacts_summary", "")
+
+    lines = [
+        f"## Active Task: {p._active_task_id}",
+        f"- Status: **{status}**",
+        f"- Phase: {current_phase}  |  Step: {current_step}",
+    ]
+    if pending_gates:
+        lines.append(f"- ⏳ Awaiting approval: {', '.join(pending_gates)}")
+    if artifacts:
+        lines.append(f"- Recent artifacts: {artifacts}")
+
+    cross_context = p._build_cross_pollination_context(state)
+    if cross_context:
+        lines.append("")
+        lines.append(cross_context)
+
+    context_text = "\n".join(lines)
+    return {"context": context_text}
+
+
+def _on_session_start(
+    session_id: str,
+    model: str,
+    platform: str,
+    **kwargs,
+) -> None:
+    """on_session_start hook — restore active task marker on session start."""
+    p = _get_provider()
+    if p._projects_root is None:
+        hermes_home = kwargs.get("hermes_home")
+        if hermes_home:
+            p._hermes_home = Path(hermes_home)
+        else:
+            p._hermes_home = Path.home() / ".hermes"
+        p._projects_root = p._hermes_home / "sagtask"
+        p._projects_root.mkdir(parents=True, exist_ok=True)
+    p._restore_active_task()
+    logger.debug(
+        "SagTask on_session_start: session_id=%s, active_task=%s",
+        session_id,
+        p._active_task_id,
+    )
+
+
+# ----------------------------------------------------------------------------
+# Plugin registration — singleton guard + hook + tool registration
+# -----------------------------------------------------------------------------
+
+
+def register(ctx) -> None:
+    """Register SagTask as a user plugin.
+
+    - Registers 11 task_* tools via ctx.register_tool()
+    - Registers pre_llm_call hook for per-turn context injection
+    - Registers on_session_start hook for sagtask root initialization
+    """
+    global _sagtask_instance
+    if _sagtask_instance is not None:
+        logger.debug("SagTaskPlugin already registered, skipping")
+        return
+
+    _sagtask_instance = SagTaskPlugin()
+
+    # ── Tools ────────────────────────────────────────────────────────────────
+    for schema in ALL_TOOL_SCHEMAS:
+        tool_name = schema["name"]
+        handler = _tool_handlers.get(tool_name)
+        if not handler:
+            logger.warning("No handler registered for tool: %s", tool_name)
+            continue
+        ctx.register_tool(
+            name=tool_name,
+            toolset="memory",
+            schema=schema,
+            handler=handler,
+            description=schema.get("description", ""),
+        )
+        logger.debug("Registered tool: %s", tool_name)
+
+    # ── Hooks ───────────────────────────────────────────────────────────────
+    ctx.register_hook("pre_llm_call", _on_pre_llm_call)
+    ctx.register_hook("on_session_start", _on_session_start)
+    logger.info("SagTask plugin registered (tools=11, hooks=pre_llm_call+on_session_start)")

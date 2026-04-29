@@ -1,0 +1,15 @@
+name: sagtask
+version: 1.2.0
+description: |
+  SagTask — standalone user plugin for long-running task management.
+  Per-task Git repos, human-in-the-loop approval gates, cross-session recovery.
+  Injects context via pre_llm_call hook. Works alongside any memory provider.
+
+INSTALLATION:
+  git clone https://github.com/ethanchen669/sagtask.git ~/.hermes/plugins/sagtask
+  Restart your Hermes gateway.
+
+pip_dependencies: []
+
+# SagTask uses ctx.register_tool() + ctx.register_hook() — not a memory provider
+kind: standalone
