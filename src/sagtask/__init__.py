@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import subprocess
 import threading
@@ -50,6 +51,14 @@ def _validate_task_id(task_id: str) -> str | None:
     if not _TASK_ID_RE.match(task_id):
         return "Invalid task_id format"
     return None
+
+
+_DEFAULT_GITHUB_OWNER = "ethanchen669"
+
+
+def _get_github_owner() -> str:
+    """Return GitHub owner from SAGTASK_GITHUB_OWNER env var or default."""
+    return os.environ.get("SAGTASK_GITHUB_OWNER", _DEFAULT_GITHUB_OWNER)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -395,7 +404,7 @@ class SagTaskPlugin:
         if result.returncode != 0:
             logger.error("git init failed for %s: %s", task_root, result.stderr)
             return False
-        remote_url = f"git@github.com:charlenchen/{task_id}.git"
+        remote_url = f"git@github.com:{_get_github_owner()}/{task_id}.git"
         subprocess.run(["git", "remote", "add", "origin", remote_url], cwd=str(task_root), capture_output=True)
         subprocess.run(["git", "add", ".gitignore"], cwd=str(task_root), capture_output=True)
         subprocess.run(["git", "commit", "-m", "Initial commit"], cwd=str(task_root), capture_output=True)
@@ -403,9 +412,9 @@ class SagTaskPlugin:
         return True
 
     def create_github_repo(self, task_id: str) -> bool:
-        result = subprocess.run(["gh", "repo", "view", f"charlenchen/{task_id}"], capture_output=True, text=True)
+        result = subprocess.run(["gh", "repo", "view", f"{_get_github_owner()}/{task_id}"], capture_output=True, text=True)
         if result.returncode == 0:
-            logger.debug("GitHub repo charlenchen/%s already exists", task_id)
+            logger.debug(f"GitHub repo {_get_github_owner()}/%s already exists", task_id)
             return True
         result = subprocess.run(
             ["gh", "repo", "create", task_id, "--source", str(self.get_task_root(task_id)), "--push"],
@@ -413,9 +422,9 @@ class SagTaskPlugin:
             text=True,
         )
         if result.returncode != 0:
-            logger.error("Failed to create GitHub repo charlenchen/%s: %s", task_id, result.stderr)
+            logger.error(f"Failed to create GitHub repo {_get_github_owner()}/%s: %s", task_id, result.stderr)
             return False
-        logger.info("GitHub repo created: charlenchen/%s", task_id)
+        logger.info(f"GitHub repo created: {_get_github_owner()}/%s", task_id)
         return True
 
     def git_push(self, task_id: str, branch: str = "main") -> bool:
