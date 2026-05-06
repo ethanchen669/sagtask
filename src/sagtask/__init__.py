@@ -61,6 +61,9 @@ def _get_github_owner() -> str:
     return os.environ.get("SAGTASK_GITHUB_OWNER", _DEFAULT_GITHUB_OWNER)
 
 
+_SUBPROCESS_TIMEOUT = 30  # seconds
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Tool schemas — inlined here so this file is self-contained (no providers/ subpackage)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -400,19 +403,19 @@ class SagTaskPlugin:
         if not gitignore.exists():
             task_root.mkdir(parents=True, exist_ok=True)
             gitignore.write_text(".sag_task_state.json\n.sag_artifacts/\n.sag_executions/\n__pycache__/\n*.pyc\n")
-        result = subprocess.run(["git", "init"], cwd=str(task_root), capture_output=True, text=True)
+        result = subprocess.run(["git", "init"], cwd=str(task_root), capture_output=True, text=True, timeout=_SUBPROCESS_TIMEOUT)
         if result.returncode != 0:
             logger.error("git init failed for %s: %s", task_root, result.stderr)
             return False
         remote_url = f"git@github.com:{_get_github_owner()}/{task_id}.git"
-        subprocess.run(["git", "remote", "add", "origin", remote_url], cwd=str(task_root), capture_output=True)
-        subprocess.run(["git", "add", ".gitignore"], cwd=str(task_root), capture_output=True)
-        subprocess.run(["git", "commit", "-m", "Initial commit"], cwd=str(task_root), capture_output=True)
+        subprocess.run(["git", "remote", "add", "origin", remote_url], cwd=str(task_root), capture_output=True, timeout=_SUBPROCESS_TIMEOUT)
+        subprocess.run(["git", "add", ".gitignore"], cwd=str(task_root), capture_output=True, timeout=_SUBPROCESS_TIMEOUT)
+        subprocess.run(["git", "commit", "-m", "Initial commit"], cwd=str(task_root), capture_output=True, timeout=_SUBPROCESS_TIMEOUT)
         logger.info("Git repo initialized for task %s", task_id)
         return True
 
     def create_github_repo(self, task_id: str) -> bool:
-        result = subprocess.run(["gh", "repo", "view", f"{_get_github_owner()}/{task_id}"], capture_output=True, text=True)
+        result = subprocess.run(["gh", "repo", "view", f"{_get_github_owner()}/{task_id}"], capture_output=True, text=True, timeout=_SUBPROCESS_TIMEOUT)
         if result.returncode == 0:
             logger.debug(f"GitHub repo {_get_github_owner()}/%s already exists", task_id)
             return True
@@ -420,6 +423,7 @@ class SagTaskPlugin:
             ["gh", "repo", "create", task_id, "--source", str(self.get_task_root(task_id)), "--push"],
             capture_output=True,
             text=True,
+            timeout=_SUBPROCESS_TIMEOUT,
         )
         if result.returncode != 0:
             logger.error(f"Failed to create GitHub repo {_get_github_owner()}/%s: %s", task_id, result.stderr)
@@ -429,12 +433,12 @@ class SagTaskPlugin:
 
     def git_push(self, task_id: str, branch: str = "main") -> bool:
         task_root = str(self.get_task_root(task_id))
-        result = subprocess.run(["git", "push", "-u", "origin", branch], cwd=task_root, capture_output=True, text=True)
+        result = subprocess.run(["git", "push", "-u", "origin", branch], cwd=task_root, capture_output=True, text=True, timeout=_SUBPROCESS_TIMEOUT)
         if result.returncode != 0:
             if "Repository not found" in result.stderr or "does not exist" in result.stderr:
                 if self.create_github_repo(task_id):
                     result = subprocess.run(
-                        ["git", "push", "-u", "origin", branch], cwd=task_root, capture_output=True, text=True
+                        ["git", "push", "-u", "origin", branch], cwd=task_root, capture_output=True, text=True, timeout=_SUBPROCESS_TIMEOUT
                     )
             if result.returncode != 0:
                 logger.error("git push failed for task %s: %s", task_id, result.stderr)
@@ -444,7 +448,7 @@ class SagTaskPlugin:
     def git_branch(self, task_id: str, branch_name: str) -> bool:
         task_root = str(self.get_task_root(task_id))
         for cmd in [["git", "checkout", "-b", branch_name], ["git", "push", "-u", "origin", branch_name]]:
-            result = subprocess.run(cmd, cwd=task_root, capture_output=True, text=True)
+            result = subprocess.run(cmd, cwd=task_root, capture_output=True, text=True, timeout=_SUBPROCESS_TIMEOUT)
             if result.returncode != 0:
                 logger.error("git branch command failed: %s", result.stderr)
                 return False
@@ -452,7 +456,7 @@ class SagTaskPlugin:
 
     def git_checkout(self, task_id: str, branch: str) -> bool:
         result = subprocess.run(
-            ["git", "checkout", branch], cwd=str(self.get_task_root(task_id)), capture_output=True, text=True
+            ["git", "checkout", branch], cwd=str(self.get_task_root(task_id)), capture_output=True, text=True, timeout=_SUBPROCESS_TIMEOUT
         )
         return result.returncode == 0
 
@@ -462,6 +466,7 @@ class SagTaskPlugin:
             cwd=str(self.get_task_root(task_id)),
             capture_output=True,
             text=True,
+            timeout=_SUBPROCESS_TIMEOUT,
         )
         if result.returncode != 0:
             return []
@@ -684,7 +689,7 @@ class SagTaskPlugin:
                 cwd=str(task_root),
                 capture_output=True,
                 text=True,
-                timeout=10,
+                timeout=_SUBPROCESS_TIMEOUT,
             )
             commit_count = int(count_result.stdout.strip() or "0")
             if commit_count >= 2:
@@ -693,7 +698,7 @@ class SagTaskPlugin:
                     cwd=str(task_root),
                     capture_output=True,
                     text=True,
-                    timeout=10,
+                    timeout=_SUBPROCESS_TIMEOUT,
                 )
                 if result.returncode == 0 and result.stdout.strip():
                     lines = result.stdout.strip().splitlines()
@@ -719,7 +724,7 @@ class SagTaskPlugin:
                 cwd=str(task_root),
                 capture_output=True,
                 text=True,
-                timeout=10,
+                timeout=_SUBPROCESS_TIMEOUT,
             )
             if result.returncode == 0 and result.stdout.strip():
                 for line in result.stdout.strip().splitlines()[:self.MAX_ARTIFACT_SUMMARIES]:
@@ -744,7 +749,7 @@ class SagTaskPlugin:
                 cwd=str(task_root),
                 capture_output=True,
                 text=True,
-                timeout=10,
+                timeout=_SUBPROCESS_TIMEOUT,
             )
             if result.returncode == 0 and result.stdout.strip():
                 lines = result.stdout.strip().splitlines()
@@ -1091,8 +1096,8 @@ def _handle_sag_task_advance(args: Dict[str, Any]) -> Dict[str, Any]:
         short_name = current_step_id or "current"
         msg = commit_message or f"WIP: [{short_name}] {steps[step_idx].get('name', '')}"
         try:
-            subprocess.run(["git", "add", "-A"], cwd=str(task_root), capture_output=True)
-            subprocess.run(["git", "commit", "-m", msg], cwd=str(task_root), capture_output=True, text=True)
+            subprocess.run(["git", "add", "-A"], cwd=str(task_root), capture_output=True, timeout=_SUBPROCESS_TIMEOUT)
+            subprocess.run(["git", "commit", "-m", msg], cwd=str(task_root), capture_output=True, text=True, timeout=_SUBPROCESS_TIMEOUT)
         except Exception:
             pass
 
@@ -1212,8 +1217,8 @@ def _handle_sag_task_commit(args: Dict[str, Any]) -> Dict[str, Any]:
     if not git_dir.exists():
         return {"ok": False, "error": f"Task '{task_id}' is not a Git repo. Run task_advance to initialize."}
 
-    subprocess.run(["git", "add", "-A"], cwd=str(task_root), capture_output=True)
-    result = subprocess.run(["git", "commit", "-m", message], cwd=str(task_root), capture_output=True, text=True)
+    subprocess.run(["git", "add", "-A"], cwd=str(task_root), capture_output=True, timeout=_SUBPROCESS_TIMEOUT)
+    result = subprocess.run(["git", "commit", "-m", message], cwd=str(task_root), capture_output=True, text=True, timeout=_SUBPROCESS_TIMEOUT)
 
     if result.returncode != 0:
         return {"ok": False, "error": f"Git commit failed: {result.stderr}"}
