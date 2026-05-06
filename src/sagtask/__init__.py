@@ -38,6 +38,20 @@ logger = logging.getLogger(__name__)
 
 SAGTASK_PROVIDER = "sagtask"
 
+_TASK_ID_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$")
+
+
+def _validate_task_id(task_id: str) -> str | None:
+    """Validate task_id format. Returns error message or None if valid."""
+    if not task_id:
+        return "task_id cannot be empty"
+    if len(task_id) > 64:
+        return "task_id must be 64 characters or less"
+    if not _TASK_ID_RE.match(task_id):
+        return "Invalid task_id format"
+    return None
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Tool schemas — inlined here so this file is self-contained (no providers/ subpackage)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -824,6 +838,9 @@ MAX_CROSS_POLLINATION = 2
 def _handle_sag_task_create(args: Dict[str, Any]) -> Dict[str, Any]:
     p = _get_provider()
     task_id = args["sag_task_id"]
+    validation_err = _validate_task_id(task_id)
+    if validation_err:
+        return {"ok": False, "error": validation_err}
     name = args["name"]
     description = args.get("description", "")
     phases = args.get("phases", [])
