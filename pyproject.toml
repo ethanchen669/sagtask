@@ -1,0 +1,22 @@
+[project]
+name = "sagtask"
+version = "1.2.0"
+requires-python = ">=3.10"
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0", "pytest-cov>=4.0"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "e2e: end-to-end tests requiring hermes CLI",
+]
+addopts = "--tb=short -q"
+
+[tool.coverage.run]
+source = ["src/sagtask"]
+omit = ["tests/*"]
+
+[tool.coverage.report]
+fail_under = 80
+show_missing = true
