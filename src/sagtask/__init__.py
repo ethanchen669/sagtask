@@ -714,8 +714,8 @@ class SagTaskPlugin:
                                 "generated_at": datetime.utcnow().isoformat() + "Z",
                                 "source": "git_diff",
                             })
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Git artifact scan step failed for %s: %s", task_id, e)
 
         # 2. List files changed (staged + unstaged) since last commit
         try:
@@ -739,8 +739,8 @@ class SagTaskPlugin:
                         "generated_at": datetime.utcnow().isoformat() + "Z",
                         "source": "git_status",
                     })
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Git artifact scan step failed for %s: %s", task_id, e)
 
         # 3. List all tracked files (show file tree snapshot)
         try:
@@ -764,8 +764,8 @@ class SagTaskPlugin:
                         "generated_at": datetime.utcnow().isoformat() + "Z",
                         "source": "git_ls_files",
                     })
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Git artifact scan step failed for %s: %s", task_id, e)
 
         return summaries
 
@@ -1098,8 +1098,8 @@ def _handle_sag_task_advance(args: Dict[str, Any]) -> Dict[str, Any]:
         try:
             subprocess.run(["git", "add", "-A"], cwd=str(task_root), capture_output=True, timeout=_SUBPROCESS_TIMEOUT)
             subprocess.run(["git", "commit", "-m", msg], cwd=str(task_root), capture_output=True, text=True, timeout=_SUBPROCESS_TIMEOUT)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Git commit failed for task %s: %s", task_id, e)
 
     # Auto-generate artifact_summaries from git diff (if not manually provided)
     # Runs AFTER git commit so git diff HEAD~1..HEAD captures this step's changes
