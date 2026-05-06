@@ -16,3 +16,25 @@ def isolated_sagtask(tmp_path):
     sagtask._sagtask_instance = plugin
     yield plugin
     sagtask._sagtask_instance = None
+
+
+@pytest.fixture
+def sample_phases():
+    """Standard test phases with gates."""
+    return [
+        {
+            "id": "phase-1",
+            "name": "Design",
+            "steps": [
+                {"id": "step-1", "name": "Data Model"},
+                {"id": "step-2", "name": "Migration Script"},
+            ],
+        },
+        {
+            "id": "phase-2",
+            "name": "Implementation",
+            "steps": [
+                {"id": "step-3", "name": "BOM Engine"},
+            ],
+        },
+    ]
