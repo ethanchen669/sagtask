@@ -1,7 +1,7 @@
 """Shared fixtures for SagTask tests."""
 import pytest
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 import sagtask
 
 
@@ -16,6 +16,14 @@ def isolated_sagtask(tmp_path):
     sagtask._sagtask_instance = plugin
     yield plugin
     sagtask._sagtask_instance = None
+
+
+@pytest.fixture
+def mock_git(isolated_sagtask):
+    """Mock git/gh subprocess calls so no real git operations occur."""
+    with patch("sagtask.subprocess.run") as mock_run:
+        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        yield mock_run
 
 
 @pytest.fixture
