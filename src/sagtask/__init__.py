@@ -629,18 +629,18 @@ class SagTaskPlugin:
 
     @staticmethod
     def _get_current_step(state: Dict[str, Any]) -> str:
+        current_step_id = state.get("current_step_id", "")
         phases = state.get("phases", [])
         current_phase_id = state.get("current_phase_id", "")
         for p in phases:
             if p.get("id") == current_phase_id:
                 steps = p.get("steps", [])
-                current_step_id = state.get("current_step_id", "")
                 for s in steps:
                     if s.get("id") == current_step_id:
                         return s.get("name", current_step_id)
                 if steps:
                     return steps[0].get("name", "—")
-        return current_step_id or "—"
+        return "—"
 
     def _scan_git_artifacts(self, task_id: str) -> List[Dict[str, Any]]:
         """Scan git diff of the last commit for changed/added files in this step.
