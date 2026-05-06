@@ -1,6 +1,7 @@
 """Tests that subprocess calls use timeout."""
 from unittest.mock import MagicMock
 import sagtask
+from sagtask import _SUBPROCESS_TIMEOUT
 
 
 class TestSubprocessTimeout:
@@ -19,7 +20,7 @@ class TestSubprocessTimeout:
         isolated_sagtask.ensure_git_repo("test-timeout")
 
         for kwargs in call_args:
-            assert "timeout" in kwargs, f"Missing timeout in: {kwargs}"
+            assert kwargs.get("timeout") == _SUBPROCESS_TIMEOUT, f"Wrong timeout in: {kwargs}"
 
     def test_git_push_uses_timeout(self, isolated_sagtask, monkeypatch):
         call_args = []
@@ -36,4 +37,4 @@ class TestSubprocessTimeout:
         isolated_sagtask.git_push("test-timeout")
 
         for kwargs in call_args:
-            assert "timeout" in kwargs, f"Missing timeout in: {kwargs}"
+            assert kwargs.get("timeout") == _SUBPROCESS_TIMEOUT, f"Wrong timeout in: {kwargs}"
