@@ -1515,11 +1515,16 @@ def _handle_sag_task_verify(args: Dict[str, Any]) -> Dict[str, Any]:
             })
             all_passed = False
 
-    ms = state.setdefault("methodology_state", {})
-    ms["last_verification"] = {
-        "passed": all_passed,
-        "timestamp": datetime.utcnow().isoformat() + "Z",
-        "results": results,
+    state = {
+        **state,
+        "methodology_state": {
+            **state.get("methodology_state", {}),
+            "last_verification": {
+                "passed": all_passed,
+                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "results": results,
+            },
+        },
     }
     p.save_task_state(task_id, state)
 
