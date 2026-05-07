@@ -63,6 +63,8 @@ def _get_github_owner() -> str:
 
 _SUBPROCESS_TIMEOUT = 30  # seconds
 
+SCHEMA_VERSION = 2
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Tool schemas — inlined here so this file is self-contained (no providers/ subpackage)
@@ -501,7 +503,14 @@ class SagTaskPlugin:
             logger.error("Failed to load task_state for %s: %s", task_id, e)
             return None
 
+    @staticmethod
+    def _ensure_schema_version(state: Dict[str, Any]) -> Dict[str, Any]:
+        if state.get("schema_version") != SCHEMA_VERSION:
+            state["schema_version"] = SCHEMA_VERSION
+        return state
+
     def save_task_state(self, task_id: str, state: Dict[str, Any]) -> None:
+        self._ensure_schema_version(state)
         path = self.get_task_state_path(task_id)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(state, indent=2, ensure_ascii=False))
@@ -878,6 +887,15 @@ def _handle_sag_task_create(args: Dict[str, Any]) -> Dict[str, Any]:
         "executions": [],
         "relationships": [],
         "artifact_summaries": [],
+        "schema_version": SCHEMA_VERSION,
+        "methodology_state": {
+            "current_methodology": "none",
+            "tdd_phase": None,
+            "plan_file": None,
+            "subtask_progress": {"total": 0, "completed": 0, "in_progress": 0},
+            "last_verification": None,
+            "review_state": None,
+        },
     }
 
     p.save_task_state(task_id, state)
