@@ -506,11 +506,23 @@ class SagTaskPlugin:
     @staticmethod
     def _ensure_schema_version(state: Dict[str, Any]) -> Dict[str, Any]:
         if state.get("schema_version") != SCHEMA_VERSION:
-            state["schema_version"] = SCHEMA_VERSION
+            state = {**state, "schema_version": SCHEMA_VERSION}
+        if "methodology_state" not in state:
+            state = {
+                **state,
+                "methodology_state": {
+                    "current_methodology": "none",
+                    "tdd_phase": None,
+                    "plan_file": None,
+                    "subtask_progress": {"total": 0, "completed": 0, "in_progress": 0},
+                    "last_verification": None,
+                    "review_state": None,
+                },
+            }
         return state
 
     def save_task_state(self, task_id: str, state: Dict[str, Any]) -> None:
-        self._ensure_schema_version(state)
+        state = self._ensure_schema_version(state)
         path = self.get_task_state_path(task_id)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(state, indent=2, ensure_ascii=False))
