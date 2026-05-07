@@ -974,6 +974,11 @@ def _handle_sag_task_create(args: Dict[str, Any]) -> Dict[str, Any]:
     task_root = p.get_task_root(task_id)
     task_root.mkdir(parents=True, exist_ok=True)
 
+    # Determine initial methodology from first step's methodology config
+    first_step = (phases[0]["steps"][0] if phases and phases[0].get("steps") else None) or {}
+    first_methodology = first_step.get("methodology", {})
+    initial_methodology = first_methodology.get("type", "none") if first_methodology else "none"
+
     state = {
         "sag_task_id": task_id,
         "name": name,
@@ -992,7 +997,7 @@ def _handle_sag_task_create(args: Dict[str, Any]) -> Dict[str, Any]:
         "artifact_summaries": [],
         "schema_version": SCHEMA_VERSION,
         "methodology_state": {
-            "current_methodology": "none",
+            "current_methodology": initial_methodology,
             "tdd_phase": None,
             "plan_file": None,
             "subtask_progress": {"total": 0, "completed": 0, "in_progress": 0},
@@ -1624,6 +1629,34 @@ def _on_pre_llm_call(
         lines.append(f"- ⏳ Awaiting approval: {', '.join(pending_gates)}")
     if artifacts:
         lines.append(f"- Recent artifacts: {artifacts}")
+
+    # Methodology context
+    ms = state.get("methodology_state", {})
+    methodology = ms.get("current_methodology", "none")
+    if methodology and methodology != "none":
+        lines.append(f"- Methodology: **{methodology}**")
+
+        # TDD phase
+        tdd_phase = ms.get("tdd_phase")
+        if tdd_phase and methodology == "tdd":
+            lines.append(f"- ⚠️ TDD phase: {tdd_phase.upper()}")
+
+        # Verification status
+        step_obj = p._get_current_step_object(state)
+        if step_obj and step_obj.get("verification"):
+            last_v = ms.get("last_verification")
+            if last_v:
+                v_status = "✓ passed" if last_v.get("passed") else "✗ failed"
+                lines.append(f"- Verification: {v_status}")
+            else:
+                lines.append("- Verification: pending")
+
+        # Plan progress
+        progress = ms.get("subtask_progress", {})
+        total = progress.get("total", 0)
+        completed = progress.get("completed", 0)
+        if total > 0:
+            lines.append(f"- Plan progress: {completed}/{total} subtasks completed")
 
     cross_context = p._build_cross_pollination_context(state)
     if cross_context:
