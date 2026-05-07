@@ -1,0 +1,72 @@
+"""Tests for methodology context injection in pre_llm_call."""
+import sagtask
+
+
+class TestContextInjection:
+    def _create_task_with_methodology(self, plugin, mock_git):
+        sagtask._handle_sag_task_create({
+            "sag_task_id": "test-ctx",
+            "name": "Test Context",
+            "phases": [{
+                "id": "phase-1",
+                "name": "Phase 1",
+                "steps": [{
+                    "id": "step-1",
+                    "name": "Step 1",
+                    "methodology": {"type": "tdd", "config": {"coverage_threshold": 80}},
+                    "verification": {"commands": ["pytest"], "must_pass": True},
+                }],
+            }],
+        })
+        active_file = plugin._projects_root / ".active_task"
+        active_file.write_text("test-ctx")
+
+    def test_context_includes_methodology_type(self, isolated_sagtask, mock_git):
+        """Context should include methodology type when set."""
+        self._create_task_with_methodology(isolated_sagtask, mock_git)
+        result = sagtask._on_pre_llm_call(
+            session_id="test", user_message="hello", conversation_history=[],
+            is_first_turn=True, model="test", platform="test", sender_id="test",
+        )
+        assert "context" in result
+        assert "tdd" in result["context"].lower()
+
+    def test_context_includes_verification_status(self, isolated_sagtask, mock_git):
+        """Context should include verification status when verification is configured."""
+        self._create_task_with_methodology(isolated_sagtask, mock_git)
+        result = sagtask._on_pre_llm_call(
+            session_id="test", user_message="hello", conversation_history=[],
+            is_first_turn=True, model="test", platform="test", sender_id="test",
+        )
+        assert "Verification" in result["context"] or "verification" in result["context"].lower()
+
+    def test_context_includes_tdd_phase(self, isolated_sagtask, mock_git):
+        """Context should include TDD phase when methodology is tdd."""
+        self._create_task_with_methodology(isolated_sagtask, mock_git)
+        state = isolated_sagtask.load_task_state("test-ctx")
+        state["methodology_state"]["tdd_phase"] = "red"
+        isolated_sagtask.save_task_state("test-ctx", state)
+        result = sagtask._on_pre_llm_call(
+            session_id="test", user_message="hello", conversation_history=[],
+            is_first_turn=True, model="test", platform="test", sender_id="test",
+        )
+        assert "RED" in result["context"]
+
+    def test_context_no_methodology_for_none(self, isolated_sagtask, mock_git):
+        """Context should not show methodology line when methodology is 'none'."""
+        sagtask._handle_sag_task_create({
+            "sag_task_id": "test-ctx-none",
+            "name": "No Method",
+            "phases": [{
+                "id": "phase-1",
+                "name": "Phase 1",
+                "steps": [{"id": "step-1", "name": "Step 1"}],
+            }],
+        })
+        active_file = isolated_sagtask._projects_root / ".active_task"
+        active_file.write_text("test-ctx-none")
+        result = sagtask._on_pre_llm_call(
+            session_id="test", user_message="hello", conversation_history=[],
+            is_first_turn=True, model="test", platform="test", sender_id="test",
+        )
+        assert "Methodology" not in result.get("context", "")
