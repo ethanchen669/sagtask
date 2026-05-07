@@ -1,4 +1,5 @@
 """Tests for sag_task_verify tool."""
+import subprocess
 from unittest.mock import MagicMock
 import sagtask
 
@@ -31,6 +32,9 @@ class TestSagTaskVerify:
         result = sagtask._handle_sag_task_verify({"sag_task_id": "test-verify"})
         assert result["ok"] is True
         assert result["passed"] is True
+        # Verify subprocess was called correctly
+        call_kwargs = mock_git.call_args
+        assert call_kwargs[1].get("shell") is True or call_kwargs.kwargs.get("shell") is True
         state = isolated_sagtask.load_task_state("test-verify")
         verification = state["methodology_state"]["last_verification"]
         assert verification["passed"] is True
@@ -91,3 +95,61 @@ class TestSagTaskVerify:
         assert result["passed"] is False
         state = isolated_sagtask.load_task_state("test-multi-verify")
         assert len(state["methodology_state"]["last_verification"]["results"]) == 2
+
+    def test_verify_timeout(self, isolated_sagtask, mock_git):
+        """Verify handles timeout gracefully."""
+        sagtask._handle_sag_task_create({
+            "sag_task_id": "test-timeout-verify",
+            "name": "Timeout Verify",
+            "phases": [{
+                "id": "phase-1",
+                "name": "Phase 1",
+                "steps": [{
+                    "id": "step-1",
+                    "name": "Step 1",
+                    "verification": {"commands": ["sleep 999"], "must_pass": True},
+                }],
+            }],
+        })
+        mock_git.side_effect = sagtask.subprocess.TimeoutExpired(cmd="sleep 999", timeout=30)
+        result = sagtask._handle_sag_task_verify({"sag_task_id": "test-timeout-verify"})
+        assert result["ok"] is True
+        assert result["passed"] is False
+        state = isolated_sagtask.load_task_state("test-timeout-verify")
+        assert state["methodology_state"]["last_verification"]["results"][0]["exit_code"] == -1
+
+    def test_verify_commands_override(self, isolated_sagtask, mock_git):
+        """Verify accepts commands override from args."""
+        sagtask._handle_sag_task_create({
+            "sag_task_id": "test-override-verify",
+            "name": "Override Verify",
+            "phases": [{
+                "id": "phase-1",
+                "name": "Phase 1",
+                "steps": [{
+                    "id": "step-1",
+                    "name": "Step 1",
+                    "verification": {"commands": ["false"], "must_pass": True},
+                }],
+            }],
+        })
+        mock_git.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
+        result = sagtask._handle_sag_task_verify({
+            "sag_task_id": "test-override-verify",
+            "commands": ["true"],
+        })
+        assert result["ok"] is True
+        assert result["passed"] is True
+
+    def test_verify_no_active_task(self, isolated_sagtask, mock_git):
+        """Verify returns error when no active task and no task_id given."""
+        isolated_sagtask._active_task_id = None
+        result = sagtask._handle_sag_task_verify({})
+        assert result["ok"] is False
+        assert "No active task" in result["error"]
+
+    def test_verify_task_not_found(self, isolated_sagtask, mock_git):
+        """Verify returns error when task doesn't exist."""
+        result = sagtask._handle_sag_task_verify({"sag_task_id": "nonexistent"})
+        assert result["ok"] is False
+        assert "not found" in result["error"]
