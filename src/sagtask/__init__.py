@@ -1181,6 +1181,20 @@ def _handle_sag_task_advance(args: Dict[str, Any]) -> Dict[str, Any]:
     if not state:
         return {"ok": False, "error": f"Task '{task_id}' not found."}
 
+    # Check verification requirements before advancing
+    step_obj = p._get_current_step_object(state)
+    if step_obj:
+        verification = step_obj.get("verification", {})
+        if verification.get("must_pass", False):
+            ms = state.get("methodology_state", {})
+            last_v = ms.get("last_verification")
+            if not last_v or not last_v.get("passed", False):
+                return {
+                    "ok": False,
+                    "error": "Verification not passed. Run sag_task_verify before advancing.",
+                    "last_verification": last_v,
+                }
+
     phases = state.get("phases", [])
     current_phase_id = state.get("current_phase_id", "")
     current_step_id = state.get("current_step_id", "")
