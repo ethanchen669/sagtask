@@ -371,6 +371,28 @@ TASK_RELATE_SCHEMA = {
     },
 }
 
+TASK_VERIFY_SCHEMA = {
+    "name": "sag_task_verify",
+    "description": "Run verification commands for the current step. "
+    "Results are recorded in methodology_state. "
+    "Must pass before sag_task_advance if verification.must_pass is True.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "sag_task_id": {
+                "type": "string",
+                "description": "Sag long term task identifier. Omit to verify the active task.",
+            },
+            "commands": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Override verification commands. Defaults to step's verification config.",
+            },
+        },
+        "required": [],
+    },
+}
+
 ALL_TOOL_SCHEMAS = [
     TASK_CREATE_SCHEMA,
     TASK_STATUS_SCHEMA,
@@ -383,6 +405,7 @@ ALL_TOOL_SCHEMAS = [
     TASK_BRANCH_SCHEMA,
     TASK_GIT_LOG_SCHEMA,
     TASK_RELATE_SCHEMA,
+    TASK_VERIFY_SCHEMA,
 ]
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -745,6 +768,19 @@ class SagTaskPlugin:
                 if steps:
                     return steps[0].get("name", "—")
         return "—"
+
+    @staticmethod
+    def _get_current_step_object(state: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Return the current step dict from phases, or None."""
+        phases = state.get("phases", [])
+        current_phase_id = state.get("current_phase_id", "")
+        current_step_id = state.get("current_step_id", "")
+        for p in phases:
+            if p.get("id") == current_phase_id:
+                for s in p.get("steps", []):
+                    if s.get("id") == current_step_id:
+                        return s
+        return None
 
     def _scan_git_artifacts(self, task_id: str) -> List[Dict[str, Any]]:
         """Scan git diff of the last commit for changed/added files in this step.
@@ -1418,6 +1454,83 @@ def _handle_sag_task_relate(args: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _handle_sag_task_verify(args: Dict[str, Any]) -> Dict[str, Any]:
+    p = _get_provider()
+    task_id = args.get("sag_task_id") or p._active_task_id
+
+    if not task_id:
+        return {"ok": False, "error": "No active task."}
+
+    state = p.load_task_state(task_id)
+    if not state:
+        return {"ok": False, "error": f"Task '{task_id}' not found."}
+
+    step = p._get_current_step_object(state)
+    if not step:
+        return {"ok": False, "error": "Cannot find current step in task phases."}
+
+    verification = step.get("verification", {})
+    commands = args.get("commands") or verification.get("commands", [])
+
+    if not commands:
+        return {
+            "ok": True,
+            "passed": True,
+            "message": "No verification configured for this step.",
+        }
+
+    task_root = p.get_task_root(task_id)
+    cwd = verification.get("cwd") or str(task_root)
+    results = []
+    all_passed = True
+
+    for cmd in commands:
+        try:
+            proc = subprocess.run(
+                cmd, shell=True, cwd=cwd,
+                capture_output=True, text=True, timeout=_SUBPROCESS_TIMEOUT,
+            )
+            results.append({
+                "command": cmd,
+                "exit_code": proc.returncode,
+                "stdout": proc.stdout[:2000],
+                "stderr": proc.stderr[:2000],
+            })
+            if proc.returncode != 0:
+                all_passed = False
+        except subprocess.TimeoutExpired:
+            results.append({
+                "command": cmd,
+                "exit_code": -1,
+                "stdout": "",
+                "stderr": f"Command timed out after {_SUBPROCESS_TIMEOUT}s",
+            })
+            all_passed = False
+        except Exception as e:
+            results.append({
+                "command": cmd,
+                "exit_code": -1,
+                "stdout": "",
+                "stderr": str(e),
+            })
+            all_passed = False
+
+    ms = state.setdefault("methodology_state", {})
+    ms["last_verification"] = {
+        "passed": all_passed,
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "results": results,
+    }
+    p.save_task_state(task_id, state)
+
+    return {
+        "ok": True,
+        "passed": all_passed,
+        "results": results,
+        "message": f"Verification {'passed' if all_passed else 'failed'} ({len(results)} commands).",
+    }
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Handler dispatch map — used by register() to call ctx.register_tool()
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1434,6 +1547,7 @@ _tool_handlers = {
     "sag_task_branch": _handle_sag_task_branch,
     "sag_task_git_log": _handle_sag_task_git_log,
     "sag_task_relate": _handle_sag_task_relate,
+    "sag_task_verify": _handle_sag_task_verify,
 }
 
 
