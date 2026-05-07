@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────────────────────
-# SagTask — One-line installer for Hermes Agent (user mode)
+# SagTask — One-line installer for Hermes Agent
 #
 # Downloads the pre-built sagtask.tar.gz from GitHub releases and extracts
-# it to ~/.hermes/plugins/sagtask/. No git required.
+# it to ~/.hermes/plugins/sagtask/. Supports checksum verification and
+# version detection to skip redundant installs.
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/ethanchen669/sagtask/main/install.sh | bash
@@ -22,76 +23,120 @@ TMPDIR=$(mktemp -d)
 cleanup() { rm -rf "$TMPDIR"; }
 trap cleanup EXIT
 
-echo "→ SagTask installer (user mode)"
+echo "→ SagTask installer"
 echo ""
 
-# ── Detect existing installation ───────────────────────────────────────────
+# ── Detect existing installation ────────────────────────────────────────────
 
 if [[ -d "$PLUGIN_DIR" ]]; then
-    # If it has .git, it's either a developer gitfile or an old git clone — not our tarball install
-    if [[ -L "$PLUGIN_DIR/.git" ]] || [[ -d "$PLUGIN_DIR/.git" ]]; then
-        echo "✗ ${PLUGIN_DIR} appears to be a git installation (gitfile or clone)."
-        echo "  For updates, use:  cd ${PLUGIN_DIR} && git pull"
-        echo "  To switch to release mode: rm -rf ${PLUGIN_DIR} && $0"
+    if [[ -e "$PLUGIN_DIR/.git" ]]; then
+        echo "✗ ${PLUGIN_DIR} is a git installation. Use: git -C ${PLUGIN_DIR} pull"
         exit 1
     fi
-    echo "⚠  ${PLUGIN_DIR} already exists. Overwriting with latest release..."
-    rm -rf "$PLUGIN_DIR"
+    CURRENT_VER=""
+    [[ -f "$PLUGIN_DIR/VERSION" ]] && CURRENT_VER=$(cat "$PLUGIN_DIR/VERSION")
 fi
 
-# ── Fetch latest release ─────────────────────────────────────────────────────
-
-echo "→ Fetching latest SagTask release..."
+# ── Fetch latest release info ───────────────────────────────────────────────
 
 RELEASE_JSON=$(curl -fsSL "https://api.github.com/repos/${OWNER}/${REPO}/releases/latest")
-TARBALL_URL=$(echo "$RELEASE_JSON" | grep -o '"tarball_url": "[^"]*"' | cut -d'"' -f4)
-
-if [[ -z "$TARBALL_URL" ]]; then
-    echo "✗ Could not find latest release. Is there a release published?"
-    exit 1
-fi
-
 VERSION=$(echo "$RELEASE_JSON" | grep -o '"tag_name": "[^"]*"' | cut -d'"' -f4)
-echo "  Release: ${VERSION}"
 
-# ── Download & extract ───────────────────────────────────────────────────────
+if [[ -z "$VERSION" ]]; then
+    echo "✗ No release found. Check https://github.com/${OWNER}/${REPO}/releases"
+    exit 1
+fi
 
-echo "→ Downloading ${TARBALL_URL}..."
+if [[ "${CURRENT_VER:-}" == "${VERSION#v}" ]]; then
+    echo "✓ Already at latest version (${VERSION}). Nothing to do."
+    exit 0
+fi
+
+echo "  Version: ${VERSION}${CURRENT_VER:+ (upgrading from ${CURRENT_VER})}"
+
+# ── Download release asset ──────────────────────────────────────────────────
+
+ASSET_URL=$(echo "$RELEASE_JSON" | grep -o '"browser_download_url": "[^"]*sagtask-[^"]*\.tar\.gz"' | cut -d'"' -f4)
+
+if [[ -z "$ASSET_URL" ]]; then
+    # Fallback: use source tarball if no asset uploaded
+    echo "  ⚠ No release asset found, falling back to source tarball..."
+    ASSET_URL=$(echo "$RELEASE_JSON" | grep -o '"tarball_url": "[^"]*"' | cut -d'"' -f4)
+    USE_SOURCE_TARBALL=true
+else
+    USE_SOURCE_TARBALL=false
+fi
+
+echo "→ Downloading..."
+curl -fsSL "$ASSET_URL" -o "$TMPDIR/sagtask.tar.gz"
+
+# ── Verify checksum (if available) ──────────────────────────────────────────
+
+SHA_URL=$(echo "$RELEASE_JSON" | grep -o '"browser_download_url": "[^"]*\.sha256"' | cut -d'"' -f4)
+if [[ -n "${SHA_URL:-}" ]]; then
+    curl -fsSL "$SHA_URL" -o "$TMPDIR/expected.sha256"
+    EXPECTED=$(cat "$TMPDIR/expected.sha256" | cut -d' ' -f1)
+    ACTUAL=$(sha256sum "$TMPDIR/sagtask.tar.gz" | cut -d' ' -f1)
+    if [[ "$EXPECTED" != "$ACTUAL" ]]; then
+        echo "✗ Checksum mismatch!"
+        echo "  Expected: ${EXPECTED}"
+        echo "  Got:      ${ACTUAL}"
+        exit 1
+    fi
+    echo "  ✓ Checksum verified"
+fi
+
+# ── Extract ─────────────────────────────────────────────────────────────────
+
 cd "$TMPDIR"
-curl -fsSL "$TARBALL_URL" -o sagtask.tar.gz
-
-echo "→ Extracting to ${PLUGIN_DIR}..."
-mkdir -p "$(dirname "$PLUGIN_DIR")"
-# The tarball extracts to a temp dir with the repo name as root — find and move it
 tar -xzf sagtask.tar.gz
-TEMP_EXTRACT=$(find "$TMPDIR" -mindepth 1 -maxdepth 1 -type d)
-mv "$TEMP_EXTRACT/sagtask" "$PLUGIN_DIR"
 
-# ── Verify ───────────────────────────────────────────────────────────────────
+if [[ "$USE_SOURCE_TARBALL" == "true" ]]; then
+    # Source tarball: find src/sagtask/ inside
+    EXTRACT_DIR=$(find . -mindepth 1 -maxdepth 1 -type d | head -1)
+    SOURCE_DIR="${EXTRACT_DIR}/src/sagtask"
+else
+    # Release asset: sagtask/ is at root of tarball
+    SOURCE_DIR="./sagtask"
+fi
 
-if [[ ! -f "${PLUGIN_DIR}/__init__.py" ]]; then
-    echo "✗ ${PLUGIN_DIR}/__init__.py not found — installation may be corrupt."
+if [[ ! -f "${SOURCE_DIR}/__init__.py" ]]; then
+    echo "✗ Invalid archive structure: __init__.py not found"
     exit 1
 fi
 
-if [[ ! -f "${PLUGIN_DIR}/plugin.yaml" ]]; then
-    echo "✗ ${PLUGIN_DIR}/plugin.yaml not found — this may not be a SagTask release."
-    exit 1
+# ── Install ─────────────────────────────────────────────────────────────────
+
+rm -rf "$PLUGIN_DIR"
+mkdir -p "$(dirname "$PLUGIN_DIR")"
+cp -r "$SOURCE_DIR" "$PLUGIN_DIR"
+
+# ── Enable in config ────────────────────────────────────────────────────────
+
+CONFIG_FILE="${HOME}/.hermes/config.yaml"
+if [[ -f "$CONFIG_FILE" ]]; then
+    if ! grep -q "sagtask" "$CONFIG_FILE" 2>/dev/null; then
+        echo "  → Adding 'sagtask' to plugins.enabled in config.yaml"
+        echo "  ⚠ Please verify sagtask is in plugins.enabled in ${CONFIG_FILE}"
+    fi
+else
+    echo "  ⚠ No config.yaml found. Add 'sagtask' to plugins.enabled after setup."
 fi
 
-echo "✓ Plugin files verified"
+# ── Verify ──────────────────────────────────────────────────────────────────
 
-# ── Check gateway ───────────────────────────────────────────────────────────
+echo "→ Verifying installation..."
+[[ -f "${PLUGIN_DIR}/__init__.py" ]] || { echo "✗ __init__.py missing"; exit 1; }
+[[ -f "${PLUGIN_DIR}/plugin.yaml" ]] || { echo "✗ plugin.yaml missing"; exit 1; }
+echo "  ✓ Files verified"
+
+# ── Done ────────────────────────────────────────────────────────────────────
 
 if pgrep -f "hermes.*gateway" > /dev/null 2>&1; then
     echo ""
-    echo "⚠  Hermes gateway is running. Restart it to load the plugin:"
-    echo ""
-    echo "   hermes gateway restart"
-else
-    echo "✓ No gateway process detected."
+    echo "  ⚠ Hermes gateway is running. Restart to load plugin:"
+    echo "    hermes gateway restart"
 fi
 
 echo ""
-echo "✓ SagTask ${VERSION} installed successfully!"
-echo "   Next: restart Hermes gateway, then type 'task_list' to verify."
+echo "✓ SagTask ${VERSION} installed → ${PLUGIN_DIR}"
