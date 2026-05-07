@@ -46,3 +46,36 @@ def sample_phases():
             ],
         },
     ]
+
+
+@pytest.fixture
+def sample_phases_with_methodology():
+    """Test phases with methodology and verification fields."""
+    return [
+        {
+            "id": "phase-1",
+            "name": "Design",
+            "steps": [
+                {
+                    "id": "step-1",
+                    "name": "Data Model",
+                    "methodology": {
+                        "type": "tdd",
+                        "config": {"coverage_threshold": 80, "test_first": True},
+                    },
+                    "verification": {
+                        "commands": ["pytest tests/ -v"],
+                        "must_pass": True,
+                    },
+                },
+                {"id": "step-2", "name": "Migration Script"},
+            ],
+        },
+        {
+            "id": "phase-2",
+            "name": "Implementation",
+            "steps": [
+                {"id": "step-3", "name": "BOM Engine"},
+            ],
+        },
+    ]
