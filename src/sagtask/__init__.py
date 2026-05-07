@@ -118,6 +118,61 @@ TASK_CREATE_SCHEMA = {
                                         },
                                         "required": ["id", "question"],
                                     },
+                                    "methodology": {
+                                        "type": "object",
+                                        "description": "Optional execution methodology for this step.",
+                                        "properties": {
+                                            "type": {
+                                                "type": "string",
+                                                "enum": [
+                                                    "tdd",
+                                                    "brainstorm",
+                                                    "debug",
+                                                    "plan-execute",
+                                                    "parallel-agents",
+                                                    "review",
+                                                    "none",
+                                                ],
+                                                "description": "Methodology type.",
+                                            },
+                                            "config": {
+                                                "type": "object",
+                                                "description": "Methodology-specific configuration.",
+                                                "properties": {
+                                                    "coverage_threshold": {
+                                                        "type": "integer",
+                                                        "description": "Min test coverage % for TDD.",
+                                                    },
+                                                    "test_first": {
+                                                        "type": "boolean",
+                                                        "description": "Enforce test-first for TDD.",
+                                                    },
+                                                },
+                                            },
+                                        },
+                                        "required": ["type"],
+                                    },
+                                    "verification": {
+                                        "type": "object",
+                                        "description": "Optional verification requirements. Advance is blocked until verification passes.",
+                                        "properties": {
+                                            "commands": {
+                                                "type": "array",
+                                                "items": {"type": "string"},
+                                                "description": "Shell commands to run for verification.",
+                                            },
+                                            "must_pass": {
+                                                "type": "boolean",
+                                                "default": True,
+                                                "description": "If True, advance is blocked until verification passes.",
+                                            },
+                                            "cwd": {
+                                                "type": "string",
+                                                "description": "Working directory for verification commands (default: task root).",
+                                            },
+                                        },
+                                        "required": ["commands"],
+                                    },
                                 },
                                 "required": ["id", "name"],
                             },
