@@ -1,7 +1,7 @@
 """Tests that exceptions are logged, not silently swallowed."""
 import logging
 import subprocess
-from datetime import datetime
+from datetime import datetime, timezone
 from unittest.mock import patch, MagicMock
 
 import pytest
@@ -32,8 +32,8 @@ class TestExceptionLogging:
             "sag_task_id": task_id,
             "name": "Exception Test",
             "status": "active",
-            "created_at": datetime.utcnow().isoformat() + "Z",
-            "updated_at": datetime.utcnow().isoformat() + "Z",
+            "created_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "updated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
             "current_phase_id": "phase-1",
             "current_step_id": "step-1",
             "phases": sample_phases,

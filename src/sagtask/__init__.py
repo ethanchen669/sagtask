@@ -31,7 +31,7 @@ import re
 import subprocess
 import threading
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
@@ -374,6 +374,7 @@ TASK_RELATE_SCHEMA = {
 TASK_VERIFY_SCHEMA = {
     "name": "sag_task_verify",
     "description": "Run verification commands for the current step. "
+    "Commands must be defined in the step's verification config at creation time. "
     "Results are recorded in methodology_state. "
     "Must pass before sag_task_advance if verification.must_pass is True.",
     "parameters": {
@@ -382,11 +383,6 @@ TASK_VERIFY_SCHEMA = {
             "sag_task_id": {
                 "type": "string",
                 "description": "Sag long term task identifier. Omit to verify the active task.",
-            },
-            "commands": {
-                "type": "array",
-                "items": {"type": "string"},
-                "description": "Override verification commands. Defaults to step's verification config.",
             },
         },
         "required": [],
@@ -823,7 +819,7 @@ class SagTaskPlugin:
                             summaries.append({
                                 "path": file_path,
                                 "summary": f"+{additions} -{deletions} (git diff HEAD~1..HEAD)",
-                                "generated_at": datetime.utcnow().isoformat() + "Z",
+                                "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
                                 "source": "git_diff",
                             })
         except Exception as e:
@@ -848,7 +844,7 @@ class SagTaskPlugin:
                     summaries.append({
                         "path": file_path,
                         "summary": f"Git status: {status} (uncommitted)",
-                        "generated_at": datetime.utcnow().isoformat() + "Z",
+                        "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
                         "source": "git_status",
                     })
         except Exception as e:
@@ -873,7 +869,7 @@ class SagTaskPlugin:
                         "path": ".git/ls-files (tracked)",
                         "summary": f"{len(tracked_files)} tracked file(s): {', '.join(tracked_files[:5])}" +
                                    ("…" if len(tracked_files) > 5 else ""),
-                        "generated_at": datetime.utcnow().isoformat() + "Z",
+                        "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
                         "source": "git_ls_files",
                     })
         except Exception as e:
@@ -949,7 +945,7 @@ class SagTaskPlugin:
         return {
             "path": rel_path,
             "summary": summary_text,
-            "generated_at": datetime.utcnow().isoformat() + "Z",
+            "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         }
 
 
@@ -984,8 +980,8 @@ def _handle_sag_task_create(args: Dict[str, Any]) -> Dict[str, Any]:
         "name": name,
         "description": description,
         "status": "active",
-        "created_at": datetime.utcnow().isoformat() + "Z",
-        "updated_at": datetime.utcnow().isoformat() + "Z",
+        "created_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "updated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "current_phase_id": phases[0]["id"] if phases else "",
         "current_step_id": phases[0]["steps"][0]["id"] if phases and phases[0].get("steps") else "",
         "phases": phases,
@@ -1086,13 +1082,13 @@ def _handle_sag_task_pause(args: Dict[str, Any]) -> Dict[str, Any]:
     if not state:
         return {"ok": False, "error": f"Task '{task_id}' not found."}
 
-    execution_id = f"exec-{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}"
+    execution_id = f"exec-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}"
 
     paused_ctx = {
         "execution_id": execution_id,
         "sag_task_id": task_id,
         "status": "paused",
-        "paused_at": datetime.utcnow().isoformat() + "Z",
+        "paused_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "reason": reason,
         "gate_id": state.get("current_gate_id", ""),
         "step_id": state.get("current_step_id", ""),
@@ -1109,7 +1105,7 @@ def _handle_sag_task_pause(args: Dict[str, Any]) -> Dict[str, Any]:
     (executions_dir / f"{execution_id}.json").write_text(json.dumps(paused_ctx, indent=2, ensure_ascii=False))
 
     state["status"] = "paused"
-    state["updated_at"] = datetime.utcnow().isoformat() + "Z"
+    state["updated_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     state["executions"] = state.get("executions", []) + [execution_id]
     p.save_task_state(task_id, state)
 
@@ -1152,10 +1148,10 @@ def _handle_sag_task_resume(args: Dict[str, Any]) -> Dict[str, Any]:
     state["status"] = "active"
     state["current_phase_id"] = paused_ctx.get("phase_id", state.get("current_phase_id"))
     state["current_step_id"] = paused_ctx.get("step_id", state.get("current_step_id"))
-    state["updated_at"] = datetime.utcnow().isoformat() + "Z"
+    state["updated_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
     paused_ctx["status"] = "resumed"
-    paused_ctx["resumed_at"] = datetime.utcnow().isoformat() + "Z"
+    paused_ctx["resumed_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     (executions_dir / f"{resume_execution_id}.json").write_text(json.dumps(paused_ctx, indent=2, ensure_ascii=False))
 
     p.save_task_state(task_id, state)
@@ -1220,8 +1216,11 @@ def _handle_sag_task_advance(args: Dict[str, Any]) -> Dict[str, Any]:
         next_phase_id = phases[phase_idx + 1]["id"]
         next_step_id = phases[phase_idx + 1]["steps"][0]["id"] if phases[phase_idx + 1].get("steps") else ""
     else:
-        state["status"] = "completed"
-        state["updated_at"] = datetime.utcnow().isoformat() + "Z"
+        state = {
+            **state,
+            "status": "completed",
+            "updated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        }
         p.save_task_state(task_id, state)
         return {
             "ok": True,
@@ -1250,11 +1249,13 @@ def _handle_sag_task_advance(args: Dict[str, Any]) -> Dict[str, Any]:
                 f"{s['path']}: {s['summary']}" for s in auto_summaries[:3]
             )
 
-    state["current_phase_id"] = next_phase_id
-    state["current_step_id"] = next_step_id
-    state["updated_at"] = datetime.utcnow().isoformat() + "Z"
-    if artifacts_summary:
-        state["artifacts_summary"] = artifacts_summary
+    state = {
+        **state,
+        "current_phase_id": next_phase_id,
+        "current_step_id": next_step_id,
+        "updated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        **({"artifacts_summary": artifacts_summary} if artifacts_summary else {}),
+    }
     p.save_task_state(task_id, state)
 
     branch_name = f"step/{next_phase_id}/{next_step_id}"
@@ -1293,12 +1294,12 @@ def _handle_sag_task_approve(args: Dict[str, Any]) -> Dict[str, Any]:
         "gate_id": gate_id,
         "decision": decision,
         "comment": comment,
-        "approved_at": datetime.utcnow().isoformat() + "Z",
+        "approved_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     }
 
     pending = [g for g in state.get("pending_gates", []) if g != gate_id]
     state["pending_gates"] = pending
-    state["updated_at"] = datetime.utcnow().isoformat() + "Z"
+    state["updated_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     state["decisions"] = state.get("decisions", []) + [approval_record]
     p.save_task_state(task_id, state)
 
@@ -1460,7 +1461,7 @@ def _handle_sag_task_relate(args: Dict[str, Any]) -> Dict[str, Any]:
             return {"ok": False, "error": f"Task '{related_task_id}' was not in the relationships list."}
 
     state["relationships"] = relationships
-    state["updated_at"] = datetime.utcnow().isoformat() + "Z"
+    state["updated_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     p.save_task_state(task_id, state)
 
     return {
@@ -1489,7 +1490,7 @@ def _handle_sag_task_verify(args: Dict[str, Any]) -> Dict[str, Any]:
         return {"ok": False, "error": "Cannot find current step in task phases."}
 
     verification = step.get("verification", {})
-    commands = args.get("commands") or verification.get("commands", [])
+    commands = verification.get("commands", [])
 
     if not commands:
         return {
@@ -1540,7 +1541,7 @@ def _handle_sag_task_verify(args: Dict[str, Any]) -> Dict[str, Any]:
             **state.get("methodology_state", {}),
             "last_verification": {
                 "passed": all_passed,
-                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
                 "results": results,
             },
         },
@@ -1641,22 +1642,22 @@ def _on_pre_llm_call(
         if tdd_phase and methodology == "tdd":
             lines.append(f"- ⚠️ TDD phase: {tdd_phase.upper()}")
 
-        # Verification status
-        step_obj = p._get_current_step_object(state)
-        if step_obj and step_obj.get("verification"):
-            last_v = ms.get("last_verification")
-            if last_v:
-                v_status = "✓ passed" if last_v.get("passed") else "✗ failed"
-                lines.append(f"- Verification: {v_status}")
-            else:
-                lines.append("- Verification: pending")
-
         # Plan progress
         progress = ms.get("subtask_progress", {})
         total = progress.get("total", 0)
         completed = progress.get("completed", 0)
         if total > 0:
             lines.append(f"- Plan progress: {completed}/{total} subtasks completed")
+
+    # Verification status (always shown if configured, regardless of methodology)
+    step_obj = p._get_current_step_object(state)
+    if step_obj and step_obj.get("verification"):
+        last_v = ms.get("last_verification")
+        if last_v:
+            v_status = "✓ passed" if last_v.get("passed") else "✗ failed"
+            lines.append(f"- Verification: {v_status}")
+        else:
+            lines.append("- Verification: pending")
 
     cross_context = p._build_cross_pollination_context(state)
     if cross_context:
