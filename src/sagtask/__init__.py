@@ -31,7 +31,7 @@ import re
 import subprocess
 import threading
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
@@ -62,6 +62,8 @@ def _get_github_owner() -> str:
 
 
 _SUBPROCESS_TIMEOUT = 30  # seconds
+
+SCHEMA_VERSION = 2
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -115,6 +117,61 @@ TASK_CREATE_SCHEMA = {
                                             },
                                         },
                                         "required": ["id", "question"],
+                                    },
+                                    "methodology": {
+                                        "type": "object",
+                                        "description": "Optional execution methodology for this step.",
+                                        "properties": {
+                                            "type": {
+                                                "type": "string",
+                                                "enum": [
+                                                    "tdd",
+                                                    "brainstorm",
+                                                    "debug",
+                                                    "plan-execute",
+                                                    "parallel-agents",
+                                                    "review",
+                                                    "none",
+                                                ],
+                                                "description": "Methodology type.",
+                                            },
+                                            "config": {
+                                                "type": "object",
+                                                "description": "Methodology-specific configuration.",
+                                                "properties": {
+                                                    "coverage_threshold": {
+                                                        "type": "integer",
+                                                        "description": "Min test coverage % for TDD.",
+                                                    },
+                                                    "test_first": {
+                                                        "type": "boolean",
+                                                        "description": "Enforce test-first for TDD.",
+                                                    },
+                                                },
+                                            },
+                                        },
+                                        "required": ["type"],
+                                    },
+                                    "verification": {
+                                        "type": "object",
+                                        "description": "Optional verification requirements. Advance is blocked until verification passes.",
+                                        "properties": {
+                                            "commands": {
+                                                "type": "array",
+                                                "items": {"type": "string"},
+                                                "description": "Shell commands to run for verification.",
+                                            },
+                                            "must_pass": {
+                                                "type": "boolean",
+                                                "default": True,
+                                                "description": "If True, advance is blocked until verification passes.",
+                                            },
+                                            "cwd": {
+                                                "type": "string",
+                                                "description": "Working directory for verification commands (default: task root).",
+                                            },
+                                        },
+                                        "required": ["commands"],
                                     },
                                 },
                                 "required": ["id", "name"],
@@ -314,6 +371,24 @@ TASK_RELATE_SCHEMA = {
     },
 }
 
+TASK_VERIFY_SCHEMA = {
+    "name": "sag_task_verify",
+    "description": "Run verification commands for the current step. "
+    "Commands must be defined in the step's verification config at creation time. "
+    "Results are recorded in methodology_state. "
+    "Must pass before sag_task_advance if verification.must_pass is True.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "sag_task_id": {
+                "type": "string",
+                "description": "Sag long term task identifier. Omit to verify the active task.",
+            },
+        },
+        "required": [],
+    },
+}
+
 ALL_TOOL_SCHEMAS = [
     TASK_CREATE_SCHEMA,
     TASK_STATUS_SCHEMA,
@@ -326,6 +401,7 @@ ALL_TOOL_SCHEMAS = [
     TASK_BRANCH_SCHEMA,
     TASK_GIT_LOG_SCHEMA,
     TASK_RELATE_SCHEMA,
+    TASK_VERIFY_SCHEMA,
 ]
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -501,7 +577,26 @@ class SagTaskPlugin:
             logger.error("Failed to load task_state for %s: %s", task_id, e)
             return None
 
+    @staticmethod
+    def _ensure_schema_version(state: Dict[str, Any]) -> Dict[str, Any]:
+        if state.get("schema_version") != SCHEMA_VERSION:
+            state = {**state, "schema_version": SCHEMA_VERSION}
+        if "methodology_state" not in state:
+            state = {
+                **state,
+                "methodology_state": {
+                    "current_methodology": "none",
+                    "tdd_phase": None,
+                    "plan_file": None,
+                    "subtask_progress": {"total": 0, "completed": 0, "in_progress": 0},
+                    "last_verification": None,
+                    "review_state": None,
+                },
+            }
+        return state
+
     def save_task_state(self, task_id: str, state: Dict[str, Any]) -> None:
+        state = self._ensure_schema_version(state)
         path = self.get_task_state_path(task_id)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(state, indent=2, ensure_ascii=False))
@@ -670,6 +765,19 @@ class SagTaskPlugin:
                     return steps[0].get("name", "—")
         return "—"
 
+    @staticmethod
+    def _get_current_step_object(state: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Return the current step dict from phases, or None."""
+        phases = state.get("phases", [])
+        current_phase_id = state.get("current_phase_id", "")
+        current_step_id = state.get("current_step_id", "")
+        for p in phases:
+            if p.get("id") == current_phase_id:
+                for s in p.get("steps", []):
+                    if s.get("id") == current_step_id:
+                        return s
+        return None
+
     def _scan_git_artifacts(self, task_id: str) -> List[Dict[str, Any]]:
         """Scan git diff of the last commit for changed/added files in this step.
 
@@ -711,7 +819,7 @@ class SagTaskPlugin:
                             summaries.append({
                                 "path": file_path,
                                 "summary": f"+{additions} -{deletions} (git diff HEAD~1..HEAD)",
-                                "generated_at": datetime.utcnow().isoformat() + "Z",
+                                "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
                                 "source": "git_diff",
                             })
         except Exception as e:
@@ -736,7 +844,7 @@ class SagTaskPlugin:
                     summaries.append({
                         "path": file_path,
                         "summary": f"Git status: {status} (uncommitted)",
-                        "generated_at": datetime.utcnow().isoformat() + "Z",
+                        "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
                         "source": "git_status",
                     })
         except Exception as e:
@@ -761,7 +869,7 @@ class SagTaskPlugin:
                         "path": ".git/ls-files (tracked)",
                         "summary": f"{len(tracked_files)} tracked file(s): {', '.join(tracked_files[:5])}" +
                                    ("…" if len(tracked_files) > 5 else ""),
-                        "generated_at": datetime.utcnow().isoformat() + "Z",
+                        "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
                         "source": "git_ls_files",
                     })
         except Exception as e:
@@ -837,7 +945,7 @@ class SagTaskPlugin:
         return {
             "path": rel_path,
             "summary": summary_text,
-            "generated_at": datetime.utcnow().isoformat() + "Z",
+            "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         }
 
 
@@ -862,13 +970,18 @@ def _handle_sag_task_create(args: Dict[str, Any]) -> Dict[str, Any]:
     task_root = p.get_task_root(task_id)
     task_root.mkdir(parents=True, exist_ok=True)
 
+    # Determine initial methodology from first step's methodology config
+    first_step = (phases[0]["steps"][0] if phases and phases[0].get("steps") else None) or {}
+    first_methodology = first_step.get("methodology", {})
+    initial_methodology = first_methodology.get("type", "none") if first_methodology else "none"
+
     state = {
         "sag_task_id": task_id,
         "name": name,
         "description": description,
         "status": "active",
-        "created_at": datetime.utcnow().isoformat() + "Z",
-        "updated_at": datetime.utcnow().isoformat() + "Z",
+        "created_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "updated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "current_phase_id": phases[0]["id"] if phases else "",
         "current_step_id": phases[0]["steps"][0]["id"] if phases and phases[0].get("steps") else "",
         "phases": phases,
@@ -878,6 +991,15 @@ def _handle_sag_task_create(args: Dict[str, Any]) -> Dict[str, Any]:
         "executions": [],
         "relationships": [],
         "artifact_summaries": [],
+        "schema_version": SCHEMA_VERSION,
+        "methodology_state": {
+            "current_methodology": initial_methodology,
+            "tdd_phase": None,
+            "plan_file": None,
+            "subtask_progress": {"total": 0, "completed": 0, "in_progress": 0},
+            "last_verification": None,
+            "review_state": None,
+        },
     }
 
     p.save_task_state(task_id, state)
@@ -960,13 +1082,13 @@ def _handle_sag_task_pause(args: Dict[str, Any]) -> Dict[str, Any]:
     if not state:
         return {"ok": False, "error": f"Task '{task_id}' not found."}
 
-    execution_id = f"exec-{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}"
+    execution_id = f"exec-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}"
 
     paused_ctx = {
         "execution_id": execution_id,
         "sag_task_id": task_id,
         "status": "paused",
-        "paused_at": datetime.utcnow().isoformat() + "Z",
+        "paused_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "reason": reason,
         "gate_id": state.get("current_gate_id", ""),
         "step_id": state.get("current_step_id", ""),
@@ -983,7 +1105,7 @@ def _handle_sag_task_pause(args: Dict[str, Any]) -> Dict[str, Any]:
     (executions_dir / f"{execution_id}.json").write_text(json.dumps(paused_ctx, indent=2, ensure_ascii=False))
 
     state["status"] = "paused"
-    state["updated_at"] = datetime.utcnow().isoformat() + "Z"
+    state["updated_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     state["executions"] = state.get("executions", []) + [execution_id]
     p.save_task_state(task_id, state)
 
@@ -1026,10 +1148,10 @@ def _handle_sag_task_resume(args: Dict[str, Any]) -> Dict[str, Any]:
     state["status"] = "active"
     state["current_phase_id"] = paused_ctx.get("phase_id", state.get("current_phase_id"))
     state["current_step_id"] = paused_ctx.get("step_id", state.get("current_step_id"))
-    state["updated_at"] = datetime.utcnow().isoformat() + "Z"
+    state["updated_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
     paused_ctx["status"] = "resumed"
-    paused_ctx["resumed_at"] = datetime.utcnow().isoformat() + "Z"
+    paused_ctx["resumed_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     (executions_dir / f"{resume_execution_id}.json").write_text(json.dumps(paused_ctx, indent=2, ensure_ascii=False))
 
     p.save_task_state(task_id, state)
@@ -1060,6 +1182,20 @@ def _handle_sag_task_advance(args: Dict[str, Any]) -> Dict[str, Any]:
     if not state:
         return {"ok": False, "error": f"Task '{task_id}' not found."}
 
+    # Check verification requirements before advancing
+    step_obj = p._get_current_step_object(state)
+    if step_obj:
+        verification = step_obj.get("verification", {})
+        if verification.get("must_pass", False):
+            ms = state.get("methodology_state", {})
+            last_v = ms.get("last_verification")
+            if not last_v or not last_v.get("passed", False):
+                return {
+                    "ok": False,
+                    "error": "Verification not passed. Run sag_task_verify before advancing.",
+                    "last_verification": last_v,
+                }
+
     phases = state.get("phases", [])
     current_phase_id = state.get("current_phase_id", "")
     current_step_id = state.get("current_step_id", "")
@@ -1080,8 +1216,11 @@ def _handle_sag_task_advance(args: Dict[str, Any]) -> Dict[str, Any]:
         next_phase_id = phases[phase_idx + 1]["id"]
         next_step_id = phases[phase_idx + 1]["steps"][0]["id"] if phases[phase_idx + 1].get("steps") else ""
     else:
-        state["status"] = "completed"
-        state["updated_at"] = datetime.utcnow().isoformat() + "Z"
+        state = {
+            **state,
+            "status": "completed",
+            "updated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        }
         p.save_task_state(task_id, state)
         return {
             "ok": True,
@@ -1110,11 +1249,13 @@ def _handle_sag_task_advance(args: Dict[str, Any]) -> Dict[str, Any]:
                 f"{s['path']}: {s['summary']}" for s in auto_summaries[:3]
             )
 
-    state["current_phase_id"] = next_phase_id
-    state["current_step_id"] = next_step_id
-    state["updated_at"] = datetime.utcnow().isoformat() + "Z"
-    if artifacts_summary:
-        state["artifacts_summary"] = artifacts_summary
+    state = {
+        **state,
+        "current_phase_id": next_phase_id,
+        "current_step_id": next_step_id,
+        "updated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        **({"artifacts_summary": artifacts_summary} if artifacts_summary else {}),
+    }
     p.save_task_state(task_id, state)
 
     branch_name = f"step/{next_phase_id}/{next_step_id}"
@@ -1153,12 +1294,12 @@ def _handle_sag_task_approve(args: Dict[str, Any]) -> Dict[str, Any]:
         "gate_id": gate_id,
         "decision": decision,
         "comment": comment,
-        "approved_at": datetime.utcnow().isoformat() + "Z",
+        "approved_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     }
 
     pending = [g for g in state.get("pending_gates", []) if g != gate_id]
     state["pending_gates"] = pending
-    state["updated_at"] = datetime.utcnow().isoformat() + "Z"
+    state["updated_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     state["decisions"] = state.get("decisions", []) + [approval_record]
     p.save_task_state(task_id, state)
 
@@ -1320,7 +1461,7 @@ def _handle_sag_task_relate(args: Dict[str, Any]) -> Dict[str, Any]:
             return {"ok": False, "error": f"Task '{related_task_id}' was not in the relationships list."}
 
     state["relationships"] = relationships
-    state["updated_at"] = datetime.utcnow().isoformat() + "Z"
+    state["updated_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     p.save_task_state(task_id, state)
 
     return {
@@ -1330,6 +1471,88 @@ def _handle_sag_task_relate(args: Dict[str, Any]) -> Dict[str, Any]:
         "related_task_id": related_task_id,
         "action": action,
         "total_relationships": len(relationships),
+    }
+
+
+def _handle_sag_task_verify(args: Dict[str, Any]) -> Dict[str, Any]:
+    p = _get_provider()
+    task_id = args.get("sag_task_id") or p._active_task_id
+
+    if not task_id:
+        return {"ok": False, "error": "No active task."}
+
+    state = p.load_task_state(task_id)
+    if not state:
+        return {"ok": False, "error": f"Task '{task_id}' not found."}
+
+    step = p._get_current_step_object(state)
+    if not step:
+        return {"ok": False, "error": "Cannot find current step in task phases."}
+
+    verification = step.get("verification", {})
+    commands = verification.get("commands", [])
+
+    if not commands:
+        return {
+            "ok": True,
+            "passed": True,
+            "message": "No verification configured for this step.",
+        }
+
+    task_root = p.get_task_root(task_id)
+    cwd = verification.get("cwd") or str(task_root)
+    results = []
+    all_passed = True
+
+    for cmd in commands:
+        try:
+            proc = subprocess.run(
+                cmd, shell=True, cwd=cwd,
+                capture_output=True, text=True, timeout=_SUBPROCESS_TIMEOUT,
+            )
+            results.append({
+                "command": cmd,
+                "exit_code": proc.returncode,
+                "stdout": proc.stdout[:2000],
+                "stderr": proc.stderr[:2000],
+            })
+            if proc.returncode != 0:
+                all_passed = False
+        except subprocess.TimeoutExpired:
+            results.append({
+                "command": cmd,
+                "exit_code": -1,
+                "stdout": "",
+                "stderr": f"Command timed out after {_SUBPROCESS_TIMEOUT}s",
+            })
+            all_passed = False
+        except Exception as e:
+            results.append({
+                "command": cmd,
+                "exit_code": -1,
+                "stdout": "",
+                "stderr": str(e),
+            })
+            all_passed = False
+
+    state = {
+        **state,
+        "methodology_state": {
+            **state.get("methodology_state", {}),
+            "last_verification": {
+                "passed": all_passed,
+                "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                "results": results,
+            },
+        },
+    }
+    p.save_task_state(task_id, state)
+
+    return {
+        "ok": True,
+        "passed": all_passed,
+        "results": results,
+        "message": f"Verification {'passed' if all_passed else 'failed'} ({len(results)} commands).",
     }
 
 
@@ -1349,6 +1572,7 @@ _tool_handlers = {
     "sag_task_branch": _handle_sag_task_branch,
     "sag_task_git_log": _handle_sag_task_git_log,
     "sag_task_relate": _handle_sag_task_relate,
+    "sag_task_verify": _handle_sag_task_verify,
 }
 
 
@@ -1406,6 +1630,34 @@ def _on_pre_llm_call(
         lines.append(f"- ⏳ Awaiting approval: {', '.join(pending_gates)}")
     if artifacts:
         lines.append(f"- Recent artifacts: {artifacts}")
+
+    # Methodology context
+    ms = state.get("methodology_state", {})
+    methodology = ms.get("current_methodology", "none")
+    if methodology and methodology != "none":
+        lines.append(f"- Methodology: **{methodology}**")
+
+        # TDD phase
+        tdd_phase = ms.get("tdd_phase")
+        if tdd_phase and methodology == "tdd":
+            lines.append(f"- ⚠️ TDD phase: {tdd_phase.upper()}")
+
+        # Plan progress
+        progress = ms.get("subtask_progress", {})
+        total = progress.get("total", 0)
+        completed = progress.get("completed", 0)
+        if total > 0:
+            lines.append(f"- Plan progress: {completed}/{total} subtasks completed")
+
+    # Verification status (always shown if configured, regardless of methodology)
+    step_obj = p._get_current_step_object(state)
+    if step_obj and step_obj.get("verification"):
+        last_v = ms.get("last_verification")
+        if last_v:
+            v_status = "✓ passed" if last_v.get("passed") else "✗ failed"
+            lines.append(f"- Verification: {v_status}")
+        else:
+            lines.append("- Verification: pending")
 
     cross_context = p._build_cross_pollination_context(state)
     if cross_context:
