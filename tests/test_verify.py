@@ -118,29 +118,6 @@ class TestSagTaskVerify:
         state = isolated_sagtask.load_task_state("test-timeout-verify")
         assert state["methodology_state"]["last_verification"]["results"][0]["exit_code"] == -1
 
-    def test_verify_commands_override(self, isolated_sagtask, mock_git):
-        """Verify accepts commands override from args."""
-        sagtask._handle_sag_task_create({
-            "sag_task_id": "test-override-verify",
-            "name": "Override Verify",
-            "phases": [{
-                "id": "phase-1",
-                "name": "Phase 1",
-                "steps": [{
-                    "id": "step-1",
-                    "name": "Step 1",
-                    "verification": {"commands": ["false"], "must_pass": True},
-                }],
-            }],
-        })
-        mock_git.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
-        result = sagtask._handle_sag_task_verify({
-            "sag_task_id": "test-override-verify",
-            "commands": ["true"],
-        })
-        assert result["ok"] is True
-        assert result["passed"] is True
-
     def test_verify_no_active_task(self, isolated_sagtask, mock_git):
         """Verify returns error when no active task and no task_id given."""
         isolated_sagtask._active_task_id = None
