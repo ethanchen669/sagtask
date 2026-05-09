@@ -62,8 +62,13 @@ def _get_github_owner() -> str:
 
 
 _SUBPROCESS_TIMEOUT = 30  # seconds
+_VERIFY_OUTPUT_MAX_LEN = 2000
 
 SCHEMA_VERSION = 2
+
+
+def _utcnow_iso() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -637,20 +642,7 @@ class SagTaskPlugin:
 
     def handle_tool_call(self, tool_name: str, args: Dict[str, Any], **kwargs) -> str:
         """Dispatch a tool call to the appropriate handler."""
-        handler_map = {
-            "sag_task_create": _handle_sag_task_create,
-            "sag_task_status": _handle_sag_task_status,
-            "sag_task_pause": _handle_sag_task_pause,
-            "sag_task_resume": _handle_sag_task_resume,
-            "sag_task_advance": _handle_sag_task_advance,
-            "sag_task_approve": _handle_sag_task_approve,
-            "sag_task_list": _handle_sag_task_list,
-            "sag_task_commit": _handle_sag_task_commit,
-            "sag_task_branch": _handle_sag_task_branch,
-            "sag_task_git_log": _handle_sag_task_git_log,
-            "sag_task_relate": _handle_sag_task_relate,
-        }
-        handler = handler_map.get(tool_name)
+        handler = _tool_handlers.get(tool_name)
         if not handler:
             return json.dumps({"error": f"Unknown tool: {tool_name}"})
         result = handler(args)
@@ -661,30 +653,62 @@ class SagTaskPlugin:
 
     # ── Optional hooks ────────────────────────────────────────────────────────
 
+    def _build_task_context(self, state: Dict[str, Any], include_methodology: bool = True) -> str:
+        """Build task context string shared by on_turn_start and pre_llm_call."""
+        status = state.get("status", "unknown")
+        current_phase = self._get_current_phase(state)
+        current_step = self._get_current_step(state)
+        pending_gates = state.get("pending_gates", [])
+        artifacts = state.get("artifacts_summary", "")
+
+        lines = [
+            f"## Active Task: {self._active_task_id}",
+            f"- Status: **{status}**",
+            f"- Phase: {current_phase}  |  Step: {current_step}",
+        ]
+        if pending_gates:
+            lines.append(f"- ⏳ Awaiting approval: {', '.join(pending_gates)}")
+        if artifacts:
+            lines.append(f"- Recent artifacts: {artifacts}")
+
+        if include_methodology:
+            ms = state.get("methodology_state", {})
+            methodology = ms.get("current_methodology", "none")
+            if methodology and methodology != "none":
+                lines.append(f"- Methodology: **{methodology}**")
+                tdd_phase = ms.get("tdd_phase")
+                if tdd_phase and methodology == "tdd":
+                    lines.append(f"- ⚠️ TDD phase: {tdd_phase.upper()}")
+                progress = ms.get("subtask_progress", {})
+                total = progress.get("total", 0)
+                completed = progress.get("completed", 0)
+                if total > 0:
+                    lines.append(f"- Plan progress: {completed}/{total} subtasks completed")
+
+            step_obj = self._get_current_step_object(state)
+            if step_obj and step_obj.get("verification"):
+                last_v = ms.get("last_verification")
+                if last_v:
+                    v_status = "✓ passed" if last_v.get("passed") else "✗ failed"
+                    lines.append(f"- Verification: {v_status}")
+                else:
+                    lines.append("- Verification: pending")
+
+        cross_context = self._build_cross_pollination_context(state)
+        if cross_context:
+            lines.append("")
+            lines.append(cross_context)
+
+        return "\n".join(lines)
+
     def on_turn_start(self, turn_number: int, message: str, **kwargs) -> None:
         if not self._active_task_id:
             return
         state = self.load_task_state(self._active_task_id)
         if not state:
             return
-        status = state.get("status", "unknown")
-        current_phase = self._get_current_phase(state)
-        current_step = self._get_current_step(state)
-        pending_gates = state.get("pending_gates", [])
-        artifacts = state.get("artifacts_summary", "")
-        lines = [f"## Active Task: {self._active_task_id}"]
-        lines.append(f"- Status: **{status}**")
-        lines.append(f"- Phase: {current_phase}  |  Step: {current_step}")
-        if pending_gates:
-            lines.append(f"- ⏳ Awaiting approval: {', '.join(pending_gates)}")
-        if artifacts:
-            lines.append(f"- Recent artifacts: {artifacts}")
-        cross_context = self._build_cross_pollination_context(state)
-        if cross_context:
-            lines.append("")
-            lines.append(cross_context)
         with self._prefetch_lock:
-            self._prefetch_result = "\n".join(lines)
+            self._prefetch_result = self._build_task_context(state, include_methodology=False)
 
     def _build_cross_pollination_context(self, state: Dict[str, Any]) -> str:
         relationships = state.get("relationships", [])
@@ -819,7 +843,7 @@ class SagTaskPlugin:
                             summaries.append({
                                 "path": file_path,
                                 "summary": f"+{additions} -{deletions} (git diff HEAD~1..HEAD)",
-                                "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                                "generated_at": _utcnow_iso(),
                                 "source": "git_diff",
                             })
         except Exception as e:
@@ -844,7 +868,7 @@ class SagTaskPlugin:
                     summaries.append({
                         "path": file_path,
                         "summary": f"Git status: {status} (uncommitted)",
-                        "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                        "generated_at": _utcnow_iso(),
                         "source": "git_status",
                     })
         except Exception as e:
@@ -869,7 +893,7 @@ class SagTaskPlugin:
                         "path": ".git/ls-files (tracked)",
                         "summary": f"{len(tracked_files)} tracked file(s): {', '.join(tracked_files[:5])}" +
                                    ("…" if len(tracked_files) > 5 else ""),
-                        "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                        "generated_at": _utcnow_iso(),
                         "source": "git_ls_files",
                     })
         except Exception as e:
@@ -945,7 +969,7 @@ class SagTaskPlugin:
         return {
             "path": rel_path,
             "summary": summary_text,
-            "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "generated_at": _utcnow_iso(),
         }
 
 
@@ -980,8 +1004,8 @@ def _handle_sag_task_create(args: Dict[str, Any]) -> Dict[str, Any]:
         "name": name,
         "description": description,
         "status": "active",
-        "created_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-        "updated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "created_at": _utcnow_iso(),
+        "updated_at": _utcnow_iso(),
         "current_phase_id": phases[0]["id"] if phases else "",
         "current_step_id": phases[0]["steps"][0]["id"] if phases and phases[0].get("steps") else "",
         "phases": phases,
@@ -1088,7 +1112,7 @@ def _handle_sag_task_pause(args: Dict[str, Any]) -> Dict[str, Any]:
         "execution_id": execution_id,
         "sag_task_id": task_id,
         "status": "paused",
-        "paused_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "paused_at": _utcnow_iso(),
         "reason": reason,
         "gate_id": state.get("current_gate_id", ""),
         "step_id": state.get("current_step_id", ""),
@@ -1104,9 +1128,12 @@ def _handle_sag_task_pause(args: Dict[str, Any]) -> Dict[str, Any]:
     executions_dir.mkdir(parents=True, exist_ok=True)
     (executions_dir / f"{execution_id}.json").write_text(json.dumps(paused_ctx, indent=2, ensure_ascii=False))
 
-    state["status"] = "paused"
-    state["updated_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-    state["executions"] = state.get("executions", []) + [execution_id]
+    state = {
+        **state,
+        "status": "paused",
+        "updated_at": _utcnow_iso(),
+        "executions": [*state.get("executions", []), execution_id],
+    }
     p.save_task_state(task_id, state)
 
     return {
@@ -1145,13 +1172,16 @@ def _handle_sag_task_resume(args: Dict[str, Any]) -> Dict[str, Any]:
         return {"ok": False, "error": "No paused execution found."}
 
     state = p.load_task_state(task_id)
-    state["status"] = "active"
-    state["current_phase_id"] = paused_ctx.get("phase_id", state.get("current_phase_id"))
-    state["current_step_id"] = paused_ctx.get("step_id", state.get("current_step_id"))
-    state["updated_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    state = {
+        **state,
+        "status": "active",
+        "current_phase_id": paused_ctx.get("phase_id", state.get("current_phase_id")),
+        "current_step_id": paused_ctx.get("step_id", state.get("current_step_id")),
+        "updated_at": _utcnow_iso(),
+    }
 
     paused_ctx["status"] = "resumed"
-    paused_ctx["resumed_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    paused_ctx["resumed_at"] = _utcnow_iso()
     (executions_dir / f"{resume_execution_id}.json").write_text(json.dumps(paused_ctx, indent=2, ensure_ascii=False))
 
     p.save_task_state(task_id, state)
@@ -1219,7 +1249,7 @@ def _handle_sag_task_advance(args: Dict[str, Any]) -> Dict[str, Any]:
         state = {
             **state,
             "status": "completed",
-            "updated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "updated_at": _utcnow_iso(),
         }
         p.save_task_state(task_id, state)
         return {
@@ -1253,7 +1283,7 @@ def _handle_sag_task_advance(args: Dict[str, Any]) -> Dict[str, Any]:
         **state,
         "current_phase_id": next_phase_id,
         "current_step_id": next_step_id,
-        "updated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "updated_at": _utcnow_iso(),
         **({"artifacts_summary": artifacts_summary} if artifacts_summary else {}),
     }
     p.save_task_state(task_id, state)
@@ -1294,12 +1324,12 @@ def _handle_sag_task_approve(args: Dict[str, Any]) -> Dict[str, Any]:
         "gate_id": gate_id,
         "decision": decision,
         "comment": comment,
-        "approved_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "approved_at": _utcnow_iso(),
     }
 
     pending = [g for g in state.get("pending_gates", []) if g != gate_id]
     state["pending_gates"] = pending
-    state["updated_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    state["updated_at"] = _utcnow_iso()
     state["decisions"] = state.get("decisions", []) + [approval_record]
     p.save_task_state(task_id, state)
 
@@ -1461,7 +1491,7 @@ def _handle_sag_task_relate(args: Dict[str, Any]) -> Dict[str, Any]:
             return {"ok": False, "error": f"Task '{related_task_id}' was not in the relationships list."}
 
     state["relationships"] = relationships
-    state["updated_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    state["updated_at"] = _utcnow_iso()
     p.save_task_state(task_id, state)
 
     return {
@@ -1500,11 +1530,19 @@ def _handle_sag_task_verify(args: Dict[str, Any]) -> Dict[str, Any]:
         }
 
     task_root = p.get_task_root(task_id)
-    cwd = verification.get("cwd") or str(task_root)
+    cwd_raw = verification.get("cwd") or str(task_root)
+    cwd_path = Path(cwd_raw).resolve()
+    try:
+        cwd_path.relative_to(task_root.resolve())
+    except ValueError:
+        return {"ok": False, "error": f"cwd '{cwd_raw}' is outside task root."}
+    cwd = str(cwd_path)
+
     results = []
     all_passed = True
 
     for cmd in commands:
+        logger.warning("sag_task_verify executing: cmd=%r cwd=%s", cmd, cwd)
         try:
             proc = subprocess.run(
                 cmd, shell=True, cwd=cwd,
@@ -1513,8 +1551,8 @@ def _handle_sag_task_verify(args: Dict[str, Any]) -> Dict[str, Any]:
             results.append({
                 "command": cmd,
                 "exit_code": proc.returncode,
-                "stdout": proc.stdout[:2000],
-                "stderr": proc.stderr[:2000],
+                "stdout": proc.stdout[:_VERIFY_OUTPUT_MAX_LEN],
+                "stderr": proc.stderr[:_VERIFY_OUTPUT_MAX_LEN],
             })
             if proc.returncode != 0:
                 all_passed = False
@@ -1541,7 +1579,7 @@ def _handle_sag_task_verify(args: Dict[str, Any]) -> Dict[str, Any]:
             **state.get("methodology_state", {}),
             "last_verification": {
                 "passed": all_passed,
-                "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                "timestamp": _utcnow_iso(),
                 "results": results,
             },
         },
@@ -1615,56 +1653,7 @@ def _on_pre_llm_call(
     if not state:
         return {}
 
-    status = state.get("status", "unknown")
-    current_phase = p._get_current_phase(state)
-    current_step = p._get_current_step(state)
-    pending_gates = state.get("pending_gates", [])
-    artifacts = state.get("artifacts_summary", "")
-
-    lines = [
-        f"## Active Task: {p._active_task_id}",
-        f"- Status: **{status}**",
-        f"- Phase: {current_phase}  |  Step: {current_step}",
-    ]
-    if pending_gates:
-        lines.append(f"- ⏳ Awaiting approval: {', '.join(pending_gates)}")
-    if artifacts:
-        lines.append(f"- Recent artifacts: {artifacts}")
-
-    # Methodology context
-    ms = state.get("methodology_state", {})
-    methodology = ms.get("current_methodology", "none")
-    if methodology and methodology != "none":
-        lines.append(f"- Methodology: **{methodology}**")
-
-        # TDD phase
-        tdd_phase = ms.get("tdd_phase")
-        if tdd_phase and methodology == "tdd":
-            lines.append(f"- ⚠️ TDD phase: {tdd_phase.upper()}")
-
-        # Plan progress
-        progress = ms.get("subtask_progress", {})
-        total = progress.get("total", 0)
-        completed = progress.get("completed", 0)
-        if total > 0:
-            lines.append(f"- Plan progress: {completed}/{total} subtasks completed")
-
-    # Verification status (always shown if configured, regardless of methodology)
-    step_obj = p._get_current_step_object(state)
-    if step_obj and step_obj.get("verification"):
-        last_v = ms.get("last_verification")
-        if last_v:
-            v_status = "✓ passed" if last_v.get("passed") else "✗ failed"
-            lines.append(f"- Verification: {v_status}")
-        else:
-            lines.append("- Verification: pending")
-
-    cross_context = p._build_cross_pollination_context(state)
-    if cross_context:
-        lines.append("")
-        lines.append(cross_context)
-
-    context_text = "\n".join(lines)
+    context_text = p._build_task_context(state, include_methodology=True)
     return {"context": context_text}
 
 
@@ -1700,7 +1689,7 @@ def _on_session_start(
 def register(ctx) -> None:
     """Register SagTask as a user plugin.
 
-    - Registers 11 task_* tools via ctx.register_tool()
+    - Registers task_* tools via ctx.register_tool()
     - Registers pre_llm_call hook for per-turn context injection
     - Registers on_session_start hook for sagtask root initialization
     """
@@ -1730,4 +1719,4 @@ def register(ctx) -> None:
     # ── Hooks ───────────────────────────────────────────────────────────────
     ctx.register_hook("pre_llm_call", _on_pre_llm_call)
     ctx.register_hook("on_session_start", _on_session_start)
-    logger.info("SagTask plugin registered (tools=11, hooks=pre_llm_call+on_session_start)")
+    logger.info("SagTask plugin registered (tools=%d, hooks=pre_llm_call+on_session_start)", len(_tool_handlers))

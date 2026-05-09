@@ -5,6 +5,21 @@ All notable changes to SagTask will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-05-08
+
+### Added
+- `sag_task_verify` tool for step-level verification commands
+- Step schema `methodology` and `verification` fields
+- `schema_version: 2` with automatic migration from v1
+- Methodology context injection via `pre_llm_call` hook (TDD phase, plan progress, verification status)
+- Advance verification gate — blocks advancement when `must_pass` is set and verification fails
+
+### Fixed
+- `handle_tool_call` missing `sag_task_verify` — now uses shared `_tool_handlers` dict
+- Command injection risk in verify — added cwd validation and execution logging
+- Duplicate context builder between `on_turn_start` and `_on_pre_llm_call`
+- `pause`/`resume` handlers now use immutable state updates
+
 ## [1.2.0] - 2026-05-06
 
 ### Added
