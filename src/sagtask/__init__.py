@@ -1368,6 +1368,14 @@ def _handle_sag_task_advance(args: Dict[str, Any]) -> Dict[str, Any]:
                     "last_verification": last_v,
                 }
 
+    # Reset tdd_phase on advance (step completed)
+    ms = state.get("methodology_state", {})
+    if ms.get("tdd_phase"):
+        state = {
+            **state,
+            "methodology_state": {**ms, "tdd_phase": None},
+        }
+
     phases = state.get("phases", [])
     current_phase_id = state.get("current_phase_id", "")
     current_step_id = state.get("current_step_id", "")
@@ -1727,6 +1735,20 @@ def _handle_sag_task_verify(args: Dict[str, Any]) -> Dict[str, Any]:
         },
     }
     p.save_task_state(task_id, state)
+
+    # TDD state machine: auto-transition phase based on verification result
+    step_obj_for_tdd = p._get_current_step_object(state)
+    if step_obj_for_tdd:
+        m_type = step_obj_for_tdd.get("methodology", {}).get("type", "none")
+        if m_type == "tdd":
+            state = p.load_task_state(task_id)  # reload after save
+            ms = state.get("methodology_state", {})
+            new_tdd_phase = "green" if all_passed else "red"
+            state = {
+                **state,
+                "methodology_state": {**ms, "tdd_phase": new_tdd_phase},
+            }
+            p.save_task_state(task_id, state)
 
     return {
         "ok": True,
