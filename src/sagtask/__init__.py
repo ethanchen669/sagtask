@@ -394,6 +394,27 @@ TASK_VERIFY_SCHEMA = {
     },
 }
 
+TASK_PLAN_SCHEMA = {
+    "name": "sag_task_plan",
+    "description": "Generate a structured subtask plan for the current step. "
+    "Creates .sag_plans/<step_id>.json with bite-sized subtasks. "
+    "Each subtask is 2-30 minutes of work depending on granularity.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "sag_task_id": {
+                "type": "string",
+                "description": "Task ID. Defaults to active task.",
+            },
+            "granularity": {
+                "type": "string",
+                "enum": ["fine", "medium", "coarse"],
+                "description": "Subtask granularity. fine=2-5min, medium=10-15min, coarse=30+min. Default: medium.",
+            },
+        },
+    },
+}
+
 ALL_TOOL_SCHEMAS = [
     TASK_CREATE_SCHEMA,
     TASK_STATUS_SCHEMA,
@@ -407,6 +428,7 @@ ALL_TOOL_SCHEMAS = [
     TASK_GIT_LOG_SCHEMA,
     TASK_RELATE_SCHEMA,
     TASK_VERIFY_SCHEMA,
+    TASK_PLAN_SCHEMA,
 ]
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -700,6 +722,95 @@ class SagTaskPlugin:
             lines.append(cross_context)
 
         return "\n".join(lines)
+
+    def _generate_plan(
+        self, step: Dict[str, Any], granularity: str = "medium"
+    ) -> Dict[str, Any]:
+        """Generate a subtask plan for a step based on its methodology and description."""
+        methodology = step.get("methodology", {}).get("type", "none")
+        step_name = step.get("name", "Unnamed Step")
+        step_desc = step.get("description", step_name)
+
+        subtasks: List[Dict[str, Any]] = []
+        st_id = 0
+
+        def _add_subtask(title: str, context: str, depends_on: Optional[List[str]] = None) -> str:
+            nonlocal st_id
+            st_id += 1
+            sid = f"st-{st_id}"
+            subtasks.append({
+                "id": sid,
+                "title": title,
+                "status": "pending",
+                "depends_on": depends_on or [],
+                "context": context,
+            })
+            return sid
+
+        if methodology == "tdd":
+            red_id = _add_subtask(
+                f"RED: Write failing test for {step_name}",
+                f"Write test(s) that capture the expected behavior described in: {step_desc}. "
+                "Tests must fail initially — no implementation yet.",
+            )
+            green_id = _add_subtask(
+                f"GREEN: Implement {step_name} to pass tests",
+                f"Write the minimal implementation that makes all tests pass. "
+                f"Context: {step_desc}",
+                depends_on=[red_id],
+            )
+            _add_subtask(
+                f"REFACTOR: Clean up {step_name}",
+                "Refactor implementation and tests for clarity and maintainability. "
+                "All tests must continue passing.",
+                depends_on=[green_id],
+            )
+            if granularity == "fine":
+                _add_subtask(
+                    f"Verify coverage meets threshold",
+                    "Run pytest with --cov and verify coverage meets the configured threshold.",
+                    depends_on=[green_id],
+                )
+        elif methodology == "brainstorm":
+            _add_subtask(
+                f"Explore design options for {step_name}",
+                f"Brainstorm 2-3 approaches for: {step_desc}. "
+                "Document trade-offs for each approach.",
+            )
+            _add_subtask(
+                f"Select and document design for {step_name}",
+                "Present options and select the best approach. Document the decision.",
+                depends_on=[f"st-{st_id}"],
+            )
+            _add_subtask(
+                f"Implement {step_name} per selected design",
+                "Implement the selected approach from the previous subtask.",
+                depends_on=[f"st-{st_id}"],
+            )
+        else:
+            _add_subtask(
+                f"Plan: Analyze requirements for {step_name}",
+                f"Analyze what needs to be done for: {step_desc}. "
+                "Identify dependencies and edge cases.",
+            )
+            _add_subtask(
+                f"Implement: {step_name}",
+                f"Implement the solution for: {step_desc}.",
+                depends_on=[f"st-{st_id}"],
+            )
+            _add_subtask(
+                f"Verify: Test {step_name}",
+                "Write tests and verify the implementation works correctly.",
+                depends_on=[f"st-{st_id}"],
+            )
+
+        return {
+            "step_id": step.get("id", ""),
+            "generated_at": _utcnow_iso(),
+            "methodology": methodology,
+            "granularity": granularity,
+            "subtasks": subtasks,
+        }
 
     def on_turn_start(self, turn_number: int, message: str, **kwargs) -> None:
         if not self._active_task_id:
@@ -1594,6 +1705,56 @@ def _handle_sag_task_verify(args: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _handle_sag_task_plan(args: Dict[str, Any]) -> Dict[str, Any]:
+    p = _get_provider()
+    task_id = args.get("sag_task_id") or p._active_task_id
+    granularity = args.get("granularity", "medium")
+
+    if not task_id:
+        return {"ok": False, "error": "No active task."}
+
+    state = p.load_task_state(task_id)
+    if not state:
+        return {"ok": False, "error": f"Task '{task_id}' not found."}
+
+    step_obj = p._get_current_step_object(state)
+    if not step_obj:
+        return {"ok": False, "error": "Cannot find current step in task phases."}
+
+    step_id = step_obj.get("id", "unknown")
+    task_root = p.get_task_root(task_id)
+    plans_dir = task_root / ".sag_plans"
+    plan_path = plans_dir / f"{step_id}.json"
+
+    if plan_path.exists():
+        return {"ok": False, "error": f"Plan already exists for step '{step_id}'. Delete it first or use plan_update."}
+
+    plan = p._generate_plan(step_obj, granularity)
+    plans_dir.mkdir(parents=True, exist_ok=True)
+    plan_path.write_text(json.dumps(plan, indent=2, ensure_ascii=False))
+
+    total = len(plan["subtasks"])
+    state = {
+        **state,
+        "methodology_state": {
+            **state.get("methodology_state", {}),
+            "plan_file": f".sag_plans/{step_id}.json",
+            "subtask_progress": {"total": total, "completed": 0, "in_progress": 0},
+        },
+    }
+    p.save_task_state(task_id, state)
+
+    return {
+        "ok": True,
+        "sag_task_id": task_id,
+        "step_id": step_id,
+        "plan_file": f".sag_plans/{step_id}.json",
+        "total_subtasks": total,
+        "subtasks": [{"id": st["id"], "title": st["title"]} for st in plan["subtasks"]],
+        "message": f"Plan generated with {total} subtasks for step '{step_id}'.",
+    }
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Handler dispatch map — used by register() to call ctx.register_tool()
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1611,6 +1772,7 @@ _tool_handlers = {
     "sag_task_git_log": _handle_sag_task_git_log,
     "sag_task_relate": _handle_sag_task_relate,
     "sag_task_verify": _handle_sag_task_verify,
+    "sag_task_plan": _handle_sag_task_plan,
 }
 
 
