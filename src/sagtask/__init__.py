@@ -395,6 +395,35 @@ TASK_VERIFY_SCHEMA = {
     },
 }
 
+TASK_PLAN_UPDATE_SCHEMA = {
+    "name": "sag_task_plan_update",
+    "description": "Update the status of a subtask in the current step's plan. "
+    "Syncs progress counts to methodology_state.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "sag_task_id": {
+                "type": "string",
+                "description": "Task ID. Defaults to active task.",
+            },
+            "subtask_id": {
+                "type": "string",
+                "description": "Subtask ID to update (e.g. 'st-1').",
+            },
+            "status": {
+                "type": "string",
+                "enum": ["pending", "in_progress", "done", "failed"],
+                "description": "New status for the subtask.",
+            },
+            "context": {
+                "type": "string",
+                "description": "Optional context or result to record on the subtask.",
+            },
+        },
+        "required": ["subtask_id", "status"],
+    },
+}
+
 TASK_PLAN_SCHEMA = {
     "name": "sag_task_plan",
     "description": "Generate a structured subtask plan for the current step. "
@@ -430,6 +459,7 @@ ALL_TOOL_SCHEMAS = [
     TASK_RELATE_SCHEMA,
     TASK_VERIFY_SCHEMA,
     TASK_PLAN_SCHEMA,
+    TASK_PLAN_UPDATE_SCHEMA,
 ]
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1756,6 +1786,77 @@ def _handle_sag_task_plan(args: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _handle_sag_task_plan_update(args: Dict[str, Any]) -> Dict[str, Any]:
+    p = _get_provider()
+    task_id = args.get("sag_task_id") or p._active_task_id
+    subtask_id = args.get("subtask_id", "")
+    new_status = args.get("status", "")
+    context = args.get("context")
+
+    valid_statuses = {"pending", "in_progress", "done", "failed"}
+    if new_status not in valid_statuses:
+        return {
+            "ok": False,
+            "error": f"Invalid status '{new_status}'. Must be one of: {', '.join(sorted(valid_statuses))}",
+        }
+
+    if not task_id:
+        return {"ok": False, "error": "No active task."}
+
+    state = p.load_task_state(task_id)
+    if not state:
+        return {"ok": False, "error": f"Task '{task_id}' not found."}
+
+    ms = state.get("methodology_state", {})
+    plan_file = ms.get("plan_file")
+    if not plan_file:
+        return {"ok": False, "error": "No plan found for current step. Run sag_task_plan first."}
+
+    task_root = p.get_task_root(task_id)
+    plan_path = task_root / plan_file
+    if not plan_path.exists():
+        return {"ok": False, "error": f"Plan file '{plan_file}' not found on disk."}
+
+    plan = json.loads(plan_path.read_text())
+    subtask = next((s for s in plan["subtasks"] if s["id"] == subtask_id), None)
+    if not subtask:
+        return {"ok": False, "error": f"Subtask '{subtask_id}' not found in plan."}
+
+    subtask["status"] = new_status
+    if context:
+        subtask["context"] = context
+
+    plan_path.write_text(json.dumps(plan, indent=2, ensure_ascii=False))
+
+    # Sync progress counts
+    subtasks = plan["subtasks"]
+    total = len(subtasks)
+    completed = sum(1 for s in subtasks if s["status"] == "done")
+    in_progress = sum(1 for s in subtasks if s["status"] == "in_progress")
+
+    state = {
+        **state,
+        "methodology_state": {
+            **ms,
+            "subtask_progress": {
+                "total": total,
+                "completed": completed,
+                "in_progress": in_progress,
+            },
+        },
+    }
+    p.save_task_state(task_id, state)
+
+    return {
+        "ok": True,
+        "sag_task_id": task_id,
+        "subtask_id": subtask_id,
+        "status": new_status,
+        "progress": {"total": total, "completed": completed, "in_progress": in_progress},
+        "message": f"Subtask '{subtask_id}' -> {new_status}. Progress: {completed}/{total}.",
+    }
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Handler dispatch map — used by register() to call ctx.register_tool()
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1774,6 +1875,7 @@ _tool_handlers = {
     "sag_task_relate": _handle_sag_task_relate,
     "sag_task_verify": _handle_sag_task_verify,
     "sag_task_plan": _handle_sag_task_plan,
+    "sag_task_plan_update": _handle_sag_task_plan_update,
 }
 
 
