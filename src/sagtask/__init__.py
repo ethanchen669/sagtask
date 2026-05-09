@@ -1793,15 +1793,15 @@ def _handle_sag_task_plan_update(args: Dict[str, Any]) -> Dict[str, Any]:
     new_status = args.get("status", "")
     context = args.get("context")
 
+    if not task_id:
+        return {"ok": False, "error": "No active task."}
+
     valid_statuses = {"pending", "in_progress", "done", "failed"}
     if new_status not in valid_statuses:
         return {
             "ok": False,
             "error": f"Invalid status '{new_status}'. Must be one of: {', '.join(sorted(valid_statuses))}",
         }
-
-    if not task_id:
-        return {"ok": False, "error": "No active task."}
 
     state = p.load_task_state(task_id)
     if not state:
@@ -1817,7 +1817,11 @@ def _handle_sag_task_plan_update(args: Dict[str, Any]) -> Dict[str, Any]:
     if not plan_path.exists():
         return {"ok": False, "error": f"Plan file '{plan_file}' not found on disk."}
 
-    plan = json.loads(plan_path.read_text())
+    try:
+        plan = json.loads(plan_path.read_text())
+    except json.JSONDecodeError as e:
+        return {"ok": False, "error": f"Plan file '{plan_file}' is corrupted: {e}"}
+
     subtask = next((s for s in plan["subtasks"] if s["id"] == subtask_id), None)
     if not subtask:
         return {"ok": False, "error": f"Subtask '{subtask_id}' not found in plan."}
@@ -1826,7 +1830,10 @@ def _handle_sag_task_plan_update(args: Dict[str, Any]) -> Dict[str, Any]:
     if context:
         subtask["context"] = context
 
-    plan_path.write_text(json.dumps(plan, indent=2, ensure_ascii=False))
+    # Atomic write: temp file then os.replace
+    tmp_path = plan_path.with_suffix(".tmp")
+    tmp_path.write_text(json.dumps(plan, indent=2, ensure_ascii=False))
+    os.replace(str(tmp_path), str(plan_path))
 
     # Sync progress counts
     subtasks = plan["subtasks"]
