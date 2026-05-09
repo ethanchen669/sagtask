@@ -16,6 +16,7 @@ STORAGE LAYOUT:
   ├── src/                            ← ✅ In Git
   ├── tests/                          ← ✅ In Git
   ├── docs/                           ← ✅ In Git
+  ├── .sag_plans/                     ← ✅ In Git (subtask plans are valuable artifacts)
   ├── .sag_artifacts/                 ← ⚠️ Git-ignored (manual cleanup)
   └── .sag_executions/                ← ⚠️ Git-ignored (snapshot on pause)
 SagTask — user plugin (standalone, NOT a memory provider).
@@ -767,8 +768,8 @@ class SagTaskPlugin:
             )
             if granularity == "fine":
                 _add_subtask(
-                    f"Verify coverage meets threshold",
-                    "Run pytest with --cov and verify coverage meets the configured threshold.",
+                    f"Verify coverage for {step_name}",
+                    f"Run pytest with --cov for {step_name} and verify coverage meets the configured threshold.",
                     depends_on=[green_id],
                 )
         elif methodology == "brainstorm":
