@@ -1723,6 +1723,14 @@ def _handle_sag_task_verify(args: Dict[str, Any]) -> Dict[str, Any]:
             })
             all_passed = False
 
+    # TDD state machine: auto-transition phase based on verification result
+    tdd_phase_update: Dict[str, Any] = {}
+    step_obj_for_tdd = p._get_current_step_object(state)
+    if step_obj_for_tdd:
+        m_type = step_obj_for_tdd.get("methodology", {}).get("type", "none")
+        if m_type == "tdd":
+            tdd_phase_update["tdd_phase"] = "green" if all_passed else "red"
+
     state = {
         **state,
         "methodology_state": {
@@ -1732,23 +1740,10 @@ def _handle_sag_task_verify(args: Dict[str, Any]) -> Dict[str, Any]:
                 "timestamp": _utcnow_iso(),
                 "results": results,
             },
+            **tdd_phase_update,
         },
     }
     p.save_task_state(task_id, state)
-
-    # TDD state machine: auto-transition phase based on verification result
-    step_obj_for_tdd = p._get_current_step_object(state)
-    if step_obj_for_tdd:
-        m_type = step_obj_for_tdd.get("methodology", {}).get("type", "none")
-        if m_type == "tdd":
-            state = p.load_task_state(task_id)  # reload after save
-            ms = state.get("methodology_state", {})
-            new_tdd_phase = "green" if all_passed else "red"
-            state = {
-                **state,
-                "methodology_state": {**ms, "tdd_phase": new_tdd_phase},
-            }
-            p.save_task_state(task_id, state)
 
     return {
         "ok": True,
@@ -1762,6 +1757,10 @@ def _handle_sag_task_plan(args: Dict[str, Any]) -> Dict[str, Any]:
     p = _get_provider()
     task_id = args.get("sag_task_id") or p._active_task_id
     granularity = args.get("granularity", "medium")
+
+    valid_granularities = {"fine", "medium", "coarse"}
+    if granularity not in valid_granularities:
+        return {"ok": False, "error": f"Invalid granularity '{granularity}'. Must be one of: {', '.join(sorted(valid_granularities))}"}
 
     if not task_id:
         return {"ok": False, "error": "No active task."}
@@ -1835,7 +1834,11 @@ def _handle_sag_task_plan_update(args: Dict[str, Any]) -> Dict[str, Any]:
         return {"ok": False, "error": "No plan found for current step. Run sag_task_plan first."}
 
     task_root = p.get_task_root(task_id)
-    plan_path = task_root / plan_file
+    plan_path = (task_root / plan_file).resolve()
+    try:
+        plan_path.relative_to(task_root.resolve())
+    except ValueError:
+        return {"ok": False, "error": f"Plan path '{plan_file}' is outside task root."}
     if not plan_path.exists():
         return {"ok": False, "error": f"Plan file '{plan_file}' not found on disk."}
 
@@ -1848,9 +1851,12 @@ def _handle_sag_task_plan_update(args: Dict[str, Any]) -> Dict[str, Any]:
     if not subtask:
         return {"ok": False, "error": f"Subtask '{subtask_id}' not found in plan."}
 
-    subtask["status"] = new_status
-    if context:
-        subtask["context"] = context
+    updated_subtasks = [
+        {**s, "status": new_status, **(({"context": context}) if context else {})}
+        if s["id"] == subtask_id else s
+        for s in plan["subtasks"]
+    ]
+    plan = {**plan, "subtasks": updated_subtasks}
 
     # Atomic write: temp file then os.replace
     tmp_path = plan_path.with_suffix(".tmp")
