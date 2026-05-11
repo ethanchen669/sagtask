@@ -18,6 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Plan progress injection in LLM context ("3/7 subtasks completed")
 - `.sag_plans/<step_id>.json` storage for Git-tracked plans
 
+### Changed
+- Refactored monolithic `__init__.py` (1,734 lines) into 10 modules (max 665 lines each)
+
 ## [1.3.0] - 2026-05-08
 
 ### Added
