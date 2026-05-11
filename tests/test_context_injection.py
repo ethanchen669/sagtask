@@ -100,3 +100,21 @@ class TestContextInjection:
             is_first_turn=True, model="test", platform="test", sender_id="test",
         )
         assert "1/" in result["context"]
+
+    def test_context_shows_active_dispatches(self, isolated_sagtask, mock_git):
+        """Context should show in-progress subtasks as active dispatches."""
+        self._create_task_with_methodology(isolated_sagtask, mock_git)
+        sagtask._handle_sag_task_plan({"sag_task_id": "test-ctx"})
+        plan_path = isolated_sagtask.get_task_root("test-ctx") / ".sag_plans" / "step-1.json"
+        plan = json.loads(plan_path.read_text())
+        first_id = plan["subtasks"][0]["id"]
+        sagtask._handle_sag_task_plan_update({
+            "sag_task_id": "test-ctx",
+            "subtask_id": first_id,
+            "status": "in_progress",
+        })
+        result = sagtask._on_pre_llm_call(
+            session_id="test", user_message="hello", conversation_history=[],
+            is_first_turn=True, model="test", platform="test", sender_id="test",
+        )
+        assert "dispatch" in result["context"].lower() or "in-progress" in result["context"].lower()

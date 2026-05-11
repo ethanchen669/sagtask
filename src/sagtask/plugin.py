@@ -283,6 +283,9 @@ class SagTaskPlugin:
                 completed = progress.get("completed", 0)
                 if total > 0:
                     lines.append(f"- Plan progress: {completed}/{total} subtasks completed")
+                    in_progress_count = progress.get("in_progress", 0)
+                    if in_progress_count > 0:
+                        lines.append(f"- Active dispatches: {in_progress_count} subtask(s) in-progress")
 
             step_obj = self._get_current_step_object(state)
             if step_obj and step_obj.get("verification"):
