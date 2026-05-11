@@ -107,10 +107,11 @@ class TestPlanUpdate:
         assert "no plan" in result["error"].lower() or "not found" in result["error"].lower()
 
     def test_done_with_note_records_context(self, isolated_sagtask, mock_git):
-        """Marking done with context should update the subtask's context field."""
+        """Marking done with context should record result (not overwrite original context)."""
         self._create_task_and_generate_plan(isolated_sagtask, mock_git)
         plan = self._get_plan(isolated_sagtask)
         first_id = plan["subtasks"][0]["id"]
+        original_context = next(s for s in plan["subtasks"] if s["id"] == first_id)["context"]
         sagtask._handle_sag_task_plan_update({
             "sag_task_id": "test-planupd",
             "subtask_id": first_id,
@@ -119,4 +120,5 @@ class TestPlanUpdate:
         })
         updated_plan = self._get_plan(isolated_sagtask)
         updated_st = next(s for s in updated_plan["subtasks"] if s["id"] == first_id)
-        assert "3 test cases" in updated_st["context"]
+        assert "3 test cases" in updated_st["result"]
+        assert updated_st["context"] == original_context  # original context preserved

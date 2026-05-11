@@ -439,7 +439,7 @@ TASK_PLAN_SCHEMA = {
             "granularity": {
                 "type": "string",
                 "enum": ["fine", "medium", "coarse"],
-                "description": "Subtask granularity. fine=2-5min, medium=10-15min, coarse=30+min. Default: medium.",
+                "description": "Subtask granularity. fine=2-5min, medium=10-15min, coarse=30+min. Default: medium. Note: only affects TDD methodology plans.",
             },
         },
     },
@@ -760,7 +760,7 @@ class SagTaskPlugin:
         """Generate a subtask plan for a step based on its methodology and description."""
         methodology = step.get("methodology", {}).get("type", "none")
         step_name = step.get("name", "Unnamed Step")
-        step_desc = step.get("description", step_name)
+        step_desc = step.get("description") or step_name
 
         subtasks: List[Dict[str, Any]] = []
         st_id = 0
@@ -836,6 +836,7 @@ class SagTaskPlugin:
             )
 
         return {
+            "plan_version": 1,
             "step_id": step.get("id", ""),
             "generated_at": _utcnow_iso(),
             "methodology": methodology,
@@ -1852,7 +1853,7 @@ def _handle_sag_task_plan_update(args: Dict[str, Any]) -> Dict[str, Any]:
         return {"ok": False, "error": f"Subtask '{subtask_id}' not found in plan."}
 
     updated_subtasks = [
-        {**s, "status": new_status, **(({"context": context}) if context else {})}
+        {**s, "status": new_status, **(({"result": context}) if context else {})}
         if s["id"] == subtask_id else s
         for s in plan["subtasks"]
     ]
