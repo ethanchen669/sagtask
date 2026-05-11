@@ -44,6 +44,7 @@ from sagtask.schemas import (  # noqa: F401
     TASK_STATUS_SCHEMA,
     TASK_VERIFY_SCHEMA,
     TASK_BRAINSTORM_SCHEMA,
+    TASK_DEBUG_SCHEMA,
 )
 
 from sagtask.plugin import SagTaskPlugin  # noqa: F401
@@ -68,6 +69,7 @@ from sagtask.handlers._plan import (  # noqa: F401
     _handle_sag_task_relate,
     _handle_sag_task_verify,
     _handle_sag_task_brainstorm,
+    _handle_sag_task_debug,
 )
 
 from sagtask.handlers._orchestration import (  # noqa: F401

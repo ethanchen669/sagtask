@@ -21,6 +21,7 @@ from ._plan import (
     _handle_sag_task_relate,
     _handle_sag_task_verify,
     _handle_sag_task_brainstorm,
+    _handle_sag_task_debug,
 )
 from ._orchestration import (
     _handle_sag_task_dispatch,
@@ -45,6 +46,7 @@ _tool_handlers = {
     "sag_task_dispatch": _handle_sag_task_dispatch,
     "sag_task_review": _handle_sag_task_review,
     "sag_task_brainstorm": _handle_sag_task_brainstorm,
+    "sag_task_debug": _handle_sag_task_debug,
 }
 
 __all__ = [
@@ -66,4 +68,5 @@ __all__ = [
     "_handle_sag_task_dispatch",
     "_handle_sag_task_review",
     "_handle_sag_task_brainstorm",
+    "_handle_sag_task_debug",
 ]

@@ -452,6 +452,30 @@ TASK_BRAINSTORM_SCHEMA = {
     },
 }
 
+TASK_DEBUG_SCHEMA = {
+    "name": "sag_task_debug",
+    "description": "Build a structured debug prompt for systematic debugging. "
+    "Tracks workflow: reproduce -> diagnose -> fix. Record hypothesis or fix to progress.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "sag_task_id": {
+                "type": "string",
+                "description": "Task ID. Defaults to active task.",
+            },
+            "hypothesis": {
+                "type": "string",
+                "description": "Current root cause hypothesis. Records diagnosis.",
+            },
+            "fix_description": {
+                "type": "string",
+                "description": "Description of the fix. Records fix and transitions to verify.",
+            },
+        },
+        "required": [],
+    },
+}
+
 ALL_TOOL_SCHEMAS = [
     TASK_CREATE_SCHEMA,
     TASK_STATUS_SCHEMA,
@@ -470,4 +494,5 @@ ALL_TOOL_SCHEMAS = [
     TASK_DISPATCH_SCHEMA,
     TASK_REVIEW_SCHEMA,
     TASK_BRAINSTORM_SCHEMA,
+    TASK_DEBUG_SCHEMA,
 ]
