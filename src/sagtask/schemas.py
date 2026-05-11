@@ -376,6 +376,10 @@ TASK_DISPATCH_SCHEMA = {
                 "description": "Max characters for the returned context prompt. "
                 "0 (default) means no limit.",
             },
+            "use_worktree": {
+                "type": "boolean",
+                "description": "Create a git worktree for isolated subtask execution. Default: false.",
+            },
         },
         "required": ["subtask_id"],
     },

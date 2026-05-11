@@ -1,5 +1,8 @@
 """Tests for sag_task_dispatch tool."""
 import json
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
 import pytest
 import sagtask
 
@@ -150,3 +153,61 @@ class TestDispatch:
         assert result["ok"] is True
         assert len(result["context"]) <= 100 + len("\n\n... (truncated)")
         assert "truncated" in result["context"]
+
+    @patch("sagtask.plugin.subprocess.run")
+    def test_dispatch_with_worktree(self, mock_run, isolated_sagtask, mock_git):
+        """Dispatch with use_worktree should include worktree_path in result."""
+        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        self._create_task_with_plan(isolated_sagtask, mock_git)
+        plan = self._get_plan(isolated_sagtask)
+        subtask_id = plan["subtasks"][0]["id"]
+        result = sagtask._handle_sag_task_dispatch({
+            "sag_task_id": "test-dispatch",
+            "subtask_id": subtask_id,
+            "use_worktree": True,
+        })
+        assert result["ok"] is True
+        assert "worktree_path" in result
+        assert subtask_id in result["worktree_path"]
+
+    @patch("sagtask.plugin.subprocess.run")
+    def test_dispatch_worktree_calls_git_add(self, mock_run, isolated_sagtask, mock_git):
+        """Dispatch with worktree should call git worktree add."""
+        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        self._create_task_with_plan(isolated_sagtask, mock_git)
+        plan = self._get_plan(isolated_sagtask)
+        subtask_id = plan["subtasks"][0]["id"]
+        sagtask._handle_sag_task_dispatch({
+            "sag_task_id": "test-dispatch",
+            "subtask_id": subtask_id,
+            "use_worktree": True,
+        })
+        worktree_calls = [c for c in mock_run.call_args_list if "worktree" in str(c)]
+        assert len(worktree_calls) > 0
+
+    @patch("sagtask.plugin.subprocess.run")
+    def test_dispatch_worktree_failure_returns_error(self, mock_run, isolated_sagtask, mock_git):
+        """Dispatch should fail when worktree creation fails."""
+        mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="worktree error")
+        self._create_task_with_plan(isolated_sagtask, mock_git)
+        plan = self._get_plan(isolated_sagtask)
+        subtask_id = plan["subtasks"][0]["id"]
+        result = sagtask._handle_sag_task_dispatch({
+            "sag_task_id": "test-dispatch",
+            "subtask_id": subtask_id,
+            "use_worktree": True,
+        })
+        assert result["ok"] is False
+        assert "worktree" in result["error"].lower()
+
+    def test_dispatch_without_worktree_no_worktree_path(self, isolated_sagtask, mock_git):
+        """Dispatch without use_worktree should not include worktree_path."""
+        self._create_task_with_plan(isolated_sagtask, mock_git)
+        plan = self._get_plan(isolated_sagtask)
+        subtask_id = plan["subtasks"][0]["id"]
+        result = sagtask._handle_sag_task_dispatch({
+            "sag_task_id": "test-dispatch",
+            "subtask_id": subtask_id,
+        })
+        assert result["ok"] is True
+        assert "worktree_path" not in result

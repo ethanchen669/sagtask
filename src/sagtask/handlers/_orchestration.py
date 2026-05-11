@@ -190,6 +190,14 @@ def _handle_sag_task_dispatch(args: Dict[str, Any]) -> Dict[str, Any]:
     }
     p.save_task_state(task_id, state)
 
+    # Create worktree if requested
+    worktree_path = None
+    use_worktree = args.get("use_worktree", False)
+    if use_worktree:
+        worktree_path = p.create_worktree(task_id, subtask_id)
+        if not worktree_path:
+            return {"ok": False, "error": f"Failed to create worktree for subtask '{subtask_id}'."}
+
     step_obj = p._get_current_step_object(state)
     methodology = ms.get("current_methodology", plan.get("methodology", "none"))
     max_context_len = args.get("max_context_len", 0)
@@ -210,6 +218,9 @@ def _handle_sag_task_dispatch(args: Dict[str, Any]) -> Dict[str, Any]:
         "context": context,
         "message": f"Dispatched subtask '{subtask_id}'. Use the context to execute with a subagent.",
     }
+    if worktree_path:
+        result["worktree_path"] = str(worktree_path)
+        result["message"] = f"Dispatched subtask '{subtask_id}' in worktree. Use the worktree path for isolated execution."
     if was_in_progress:
         result["warning"] = f"Subtask '{subtask_id}' was already in-progress. Re-dispatched."
         result["message"] = f"Re-dispatched subtask '{subtask_id}'."
