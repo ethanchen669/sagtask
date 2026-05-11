@@ -215,3 +215,127 @@ def _handle_sag_task_dispatch(args: Dict[str, Any]) -> Dict[str, Any]:
         result["message"] = f"Re-dispatched subtask '{subtask_id}'."
 
     return result
+
+
+# -- Review context builder -----------------------------------------------------
+
+
+def _build_review_context(
+    step_obj: Dict[str, Any],
+    scope: str,
+    state: Dict[str, Any],
+    phase_name: str = "",
+) -> str:
+    """Build a structured review prompt."""
+    step_name = step_obj.get("name", "Unknown Step")
+    step_desc = step_obj.get("description", "")
+
+    lines = [
+        f"## Code Review: {phase_name + ': ' if phase_name else ''}{step_name}",
+        f"**Scope:** {scope}",
+        "",
+        "### Stage 1: Spec Compliance",
+        "Verify the implementation matches the requirements:",
+    ]
+
+    if step_desc:
+        lines.append(f"- Requirement: {step_desc}")
+
+    verification = step_obj.get("verification", {})
+    commands = verification.get("commands", [])
+    if commands:
+        lines.append("- Verification commands:")
+        for cmd in commands:
+            lines.append(f"  ```bash\n  {cmd}\n  ```")
+
+    must_pass = verification.get("must_pass", False)
+    if must_pass:
+        lines.append("- **MUST PASS** before advancing")
+
+    methodology = step_obj.get("methodology", {}).get("type", "none")
+    lines.extend(["", "### Stage 2: Code Quality"])
+
+    if methodology == "tdd":
+        lines.extend([
+            "Check TDD compliance:",
+            "- Tests exist for new functionality",
+            "- Tests were written before implementation",
+            "- Coverage meets threshold",
+            "- Code is readable and well-named",
+        ])
+    elif methodology == "brainstorm":
+        lines.extend([
+            "Check design quality:",
+            "- Design rationale is documented",
+            "- Trade-offs are explicitly stated",
+            "- Implementation matches selected design",
+        ])
+    else:
+        lines.extend([
+            "General quality checks:",
+            "- Code is readable and well-named",
+            "- Functions are focused (<50 lines)",
+            "- Error handling is explicit",
+            "- Tests exist for new functionality",
+        ])
+
+    lines.extend([
+        "",
+        "### Review Severity Levels",
+        "| Level | Meaning | Action |",
+        "|-------|---------|--------|",
+        "| CRITICAL | Security vulnerability or data loss | BLOCK |",
+        "| HIGH | Bug or significant quality issue | WARN |",
+        "| MEDIUM | Maintainability concern | INFO |",
+        "| LOW | Style or minor suggestion | NOTE |",
+    ])
+
+    return "\n".join(lines)
+
+
+def _handle_sag_task_review(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Build a structured review prompt for the current step."""
+    p = _get_provider()
+    task_id = args.get("sag_task_id") or p._active_task_id
+    scope = args.get("scope", "step")
+
+    if scope not in ("step", "phase", "full"):
+        return {"ok": False, "error": f"Invalid scope '{scope}'. Must be step, phase, or full."}
+
+    if not task_id:
+        return {"ok": False, "error": "No active task."}
+
+    state = p.load_task_state(task_id)
+    if not state:
+        return {"ok": False, "error": f"Task '{task_id}' not found."}
+
+    step_obj = p._get_current_step_object(state)
+    if not step_obj:
+        return {"ok": False, "error": "Cannot find current step in task phases."}
+
+    # Find the current phase name for the step
+    phase_name = ""
+    step_id = step_obj.get("id")
+    for phase in state.get("phases", []):
+        for s in phase.get("steps", []):
+            if s.get("id") == step_id:
+                phase_name = phase.get("name", "")
+                break
+        if phase_name:
+            break
+
+    context = _build_review_context(
+        step_obj=step_obj,
+        scope=scope,
+        state=state,
+        phase_name=phase_name,
+    )
+
+    return {
+        "ok": True,
+        "sag_task_id": task_id,
+        "scope": scope,
+        "step_id": step_obj.get("id", "unknown"),
+        "context": context,
+        "message": f"Review context built for scope '{scope}'. Use this to dispatch a review subagent.",
+    }

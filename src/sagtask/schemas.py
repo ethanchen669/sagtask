@@ -355,7 +355,7 @@ TASK_PLAN_UPDATE_SCHEMA = {
     },
 }
 
-TASK_DISPATCH_SCHEMA: Dict[str, Any] = {
+TASK_DISPATCH_SCHEMA = {
     "name": "sag_task_dispatch",
     "description": "Dispatch a subtask for execution. Builds a self-contained context "
     "prompt with subtask details, methodology instructions, and dependency status. "
@@ -397,6 +397,27 @@ TASK_PLAN_SCHEMA = {
     },
 }
 
+TASK_REVIEW_SCHEMA = {
+    "name": "sag_task_review",
+    "description": "Build a structured review prompt for the current step. "
+    "Supports two-stage review: spec compliance first, then code quality. "
+    "Returns review criteria based on step verification and methodology.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "sag_task_id": {
+                "type": "string",
+                "description": "Task ID. Defaults to active task.",
+            },
+            "scope": {
+                "type": "string",
+                "enum": ["step", "phase", "full"],
+                "description": "Review scope. Default: step.",
+            },
+        },
+    },
+}
+
 ALL_TOOL_SCHEMAS = [
     TASK_CREATE_SCHEMA,
     TASK_STATUS_SCHEMA,
@@ -413,4 +434,5 @@ ALL_TOOL_SCHEMAS = [
     TASK_PLAN_SCHEMA,
     TASK_PLAN_UPDATE_SCHEMA,
     TASK_DISPATCH_SCHEMA,
+    TASK_REVIEW_SCHEMA,
 ]

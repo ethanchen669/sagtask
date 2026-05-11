@@ -23,6 +23,7 @@ from ._plan import (
 )
 from ._orchestration import (
     _handle_sag_task_dispatch,
+    _handle_sag_task_review,
 )
 
 _tool_handlers = {
@@ -41,6 +42,7 @@ _tool_handlers = {
     "sag_task_plan": _handle_sag_task_plan,
     "sag_task_plan_update": _handle_sag_task_plan_update,
     "sag_task_dispatch": _handle_sag_task_dispatch,
+    "sag_task_review": _handle_sag_task_review,
 }
 
 __all__ = [
@@ -60,4 +62,5 @@ __all__ = [
     "_handle_sag_task_plan",
     "_handle_sag_task_plan_update",
     "_handle_sag_task_dispatch",
+    "_handle_sag_task_review",
 ]
