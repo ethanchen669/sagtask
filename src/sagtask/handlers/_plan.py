@@ -12,6 +12,7 @@ from .._utils import (
     _SUBPROCESS_TIMEOUT,
     _VERIFY_OUTPUT_MAX_LEN,
     _get_provider,
+    _load_plan,
     _utcnow_iso,
 )
 
@@ -269,23 +270,25 @@ def _handle_sag_task_plan_update(args: Dict[str, Any]) -> Dict[str, Any]:
         plan_path.relative_to(task_root.resolve())
     except ValueError:
         return {"ok": False, "error": f"Plan path '{plan_file}' is outside task root."}
-    if not plan_path.exists():
-        return {"ok": False, "error": f"Plan file '{plan_file}' not found on disk."}
 
-    try:
-        plan = json.loads(plan_path.read_text())
-    except json.JSONDecodeError as e:
-        return {"ok": False, "error": f"Plan file '{plan_file}' is corrupted: {e}"}
+    plan = _load_plan(plan_path)
+    if not plan:
+        return {"ok": False, "error": f"Plan file '{plan_file}' not found or corrupted."}
 
     subtask = next((s for s in plan["subtasks"] if s["id"] == subtask_id), None)
     if not subtask:
         return {"ok": False, "error": f"Subtask '{subtask_id}' not found in plan."}
 
-    updated_subtasks = [
-        {**s, "status": new_status, **(({"result": context}) if context else {})}
-        if s["id"] == subtask_id else s
-        for s in plan["subtasks"]
-    ]
+    def _update_subtask(s: Dict[str, Any]) -> Dict[str, Any]:
+        if s["id"] != subtask_id:
+            return s
+        updated = {**s, "status": new_status}
+        if context:
+            existing = s.get("result", "")
+            updated["result"] = f"{existing}\n{context}".strip() if existing else context
+        return updated
+
+    updated_subtasks = [_update_subtask(s) for s in plan["subtasks"]]
     plan = {**plan, "subtasks": updated_subtasks}
 
     # Atomic write: temp file then os.replace
