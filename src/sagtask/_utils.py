@@ -6,7 +6,7 @@ import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 logger = __import__("logging").getLogger(__name__)
 
@@ -55,3 +55,45 @@ def _load_plan(plan_path: Path) -> Optional[Dict[str, Any]]:
         return json.loads(plan_path.read_text())
     except (json.JSONDecodeError, OSError):
         return None
+
+
+# Methodology recommendation keywords
+_METHODOLOGY_KEYWORDS: Dict[str, Dict[str, Any]] = {
+    "tdd": {
+        "keywords": ["test", "coverage", "unit test", "pytest", "spec", "assert", "tdd"],
+        "reason": "Step involves testing or test-driven development",
+    },
+    "brainstorm": {
+        "keywords": ["design", "explore", "architect", "option", "trade-off", "evaluate", "compare"],
+        "reason": "Step involves design exploration or evaluation",
+    },
+    "debug": {
+        "keywords": ["bug", "fix", "crash", "error", "broken", "fail", "regression", "debug"],
+        "reason": "Step involves fixing a bug or debugging",
+    },
+    "plan-execute": {
+        "keywords": ["plan", "break down", "decompose", "migration", "refactor", "phase"],
+        "reason": "Step involves planning or breaking work into phases",
+    },
+}
+
+
+def _recommend_methodology(
+    step_name: str, step_description: str
+) -> List[Tuple[str, float, str]]:
+    """Recommend methodology based on step name and description.
+
+    Returns list of (methodology, confidence, reason) sorted by confidence descending.
+    """
+    text = f"{step_name} {step_description}".lower()
+    results: List[Tuple[str, float, str]] = []
+
+    for methodology, config in _METHODOLOGY_KEYWORDS.items():
+        keywords = config["keywords"]
+        matches = sum(1 for kw in keywords if kw in text)
+        if matches > 0:
+            confidence = min(matches / len(keywords), 1.0)
+            results.append((methodology, confidence, config["reason"]))
+
+    results.sort(key=lambda x: x[1], reverse=True)
+    return results
