@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import logging
 import subprocess  # noqa: F401 — re-exported for test mock targets (conftest patches sagtask.subprocess.run)
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -80,8 +79,12 @@ from sagtask.handlers import _tool_handlers  # noqa: F401
 from sagtask.hooks import _on_pre_llm_call, _on_session_start  # noqa: F401
 
 
-# Backward-compat alias — tests do ``sagtask._sagtask_instance = None``.
-_sagtask_instance: Optional["SagTaskPlugin"] = None
+# Backward-compat: tests do ``sagtask._sagtask_instance = None``.
+# Proxied to _utils._sagtask_instance (the single source of truth).
+def __getattr__(name: str):
+    if name == "_sagtask_instance":
+        return _utils._sagtask_instance
+    raise AttributeError(name)
 
 
 def register(ctx) -> None:
@@ -91,13 +94,11 @@ def register(ctx) -> None:
     - Registers pre_llm_call hook for per-turn context injection
     - Registers on_session_start hook for sagtask root initialization
     """
-    global _sagtask_instance
-    if _sagtask_instance is not None:
+    if _utils._sagtask_instance is not None:
         logger.debug("SagTaskPlugin already registered, skipping")
         return
 
-    _sagtask_instance = SagTaskPlugin()
-    _utils._sagtask_instance = _sagtask_instance
+    _utils._sagtask_instance = SagTaskPlugin()
 
     # ── Tools ────────────────────────────────────────────────────────────────
     for schema in ALL_TOOL_SCHEMAS:

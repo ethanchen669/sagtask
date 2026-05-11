@@ -122,3 +122,25 @@ class TestPlanUpdate:
         updated_st = next(s for s in updated_plan["subtasks"] if s["id"] == first_id)
         assert "3 test cases" in updated_st["result"]
         assert updated_st["context"] == original_context  # original context preserved
+
+    def test_context_appends_on_multiple_updates(self, isolated_sagtask, mock_git):
+        """Multiple context updates should append, not overwrite."""
+        self._create_task_and_generate_plan(isolated_sagtask, mock_git)
+        plan = self._get_plan(isolated_sagtask)
+        first_id = plan["subtasks"][0]["id"]
+        sagtask._handle_sag_task_plan_update({
+            "sag_task_id": "test-planupd",
+            "subtask_id": first_id,
+            "status": "in_progress",
+            "context": "First update.",
+        })
+        sagtask._handle_sag_task_plan_update({
+            "sag_task_id": "test-planupd",
+            "subtask_id": first_id,
+            "status": "done",
+            "context": "Second update.",
+        })
+        updated_plan = self._get_plan(isolated_sagtask)
+        updated_st = next(s for s in updated_plan["subtasks"] if s["id"] == first_id)
+        assert "First update." in updated_st["result"]
+        assert "Second update." in updated_st["result"]

@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from .._utils import _get_provider, _utcnow_iso
+from .._utils import _get_provider, _load_plan, _utcnow_iso
 
 logger = logging.getLogger(__name__)
 
@@ -46,22 +46,13 @@ _METHODOLOGY_INSTRUCTIONS: Dict[str, str] = {
 }
 
 
-def _load_plan(plan_path: Path) -> Optional[Dict[str, Any]]:
-    """Load and return plan JSON, or None on error."""
-    if not plan_path.exists():
-        return None
-    try:
-        return json.loads(plan_path.read_text())
-    except (json.JSONDecodeError, OSError):
-        return None
-
-
 def _build_dispatch_context(
     subtask: Dict[str, Any],
     step_obj: Dict[str, Any],
     methodology: str,
     task_root: str,
     plan: Dict[str, Any],
+    max_context_len: int = 0,
 ) -> str:
     """Build a self-contained context prompt for a subagent dispatch."""
     lines = [
@@ -128,7 +119,10 @@ def _build_dispatch_context(
             )
             lines.append(f"- [{icon}] {s['id']}: {s['title']}")
 
-    return "\n".join(lines)
+    context = "\n".join(lines)
+    if max_context_len > 0 and len(context) > max_context_len:
+        context = context[:max_context_len] + "\n\n... (truncated)"
+    return context
 
 
 def _handle_sag_task_dispatch(args: Dict[str, Any]) -> Dict[str, Any]:
@@ -194,12 +188,14 @@ def _handle_sag_task_dispatch(args: Dict[str, Any]) -> Dict[str, Any]:
 
     step_obj = p._get_current_step_object(state)
     methodology = ms.get("current_methodology", plan.get("methodology", "none"))
+    max_context_len = args.get("max_context_len", 0)
     context = _build_dispatch_context(
         subtask=next(s for s in plan["subtasks"] if s["id"] == subtask_id),
         step_obj=step_obj or {},
         methodology=methodology,
         task_root=str(task_root),
         plan=plan,
+        max_context_len=max_context_len,
     )
 
     result: Dict[str, Any] = {

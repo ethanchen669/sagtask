@@ -7,10 +7,9 @@ import sagtask
 
 class TestGetProvider:
     def test_raises_when_not_registered(self):
-        sagtask._sagtask_instance = None
+        sagtask._utils._sagtask_instance = None
         with pytest.raises(RuntimeError, match="not registered"):
             sagtask._get_provider()
-        sagtask._sagtask_instance = None
 
 
 class TestApproveHandler:

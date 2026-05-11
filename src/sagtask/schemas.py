@@ -371,6 +371,11 @@ TASK_DISPATCH_SCHEMA = {
                 "type": "string",
                 "description": "Subtask ID from the plan to dispatch.",
             },
+            "max_context_len": {
+                "type": "integer",
+                "description": "Max characters for the returned context prompt. "
+                "0 (default) means no limit.",
+            },
         },
         "required": ["subtask_id"],
     },

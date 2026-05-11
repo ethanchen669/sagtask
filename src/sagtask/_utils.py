@@ -1,10 +1,12 @@
 """Shared constants and utility functions for SagTask."""
 from __future__ import annotations
 
+import json
 import os
 import re
 from datetime import datetime, timezone
-from typing import Optional
+from pathlib import Path
+from typing import Any, Dict, Optional
 
 logger = __import__("logging").getLogger(__name__)
 
@@ -43,3 +45,13 @@ def _get_provider() -> "SagTaskPlugin":
     if _sagtask_instance is None:
         raise RuntimeError("SagTaskPlugin not registered. Call register(ctx) first.")
     return _sagtask_instance
+
+
+def _load_plan(plan_path: Path) -> Optional[Dict[str, Any]]:
+    """Load and return plan JSON, or None on error."""
+    if not plan_path.exists():
+        return None
+    try:
+        return json.loads(plan_path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return None

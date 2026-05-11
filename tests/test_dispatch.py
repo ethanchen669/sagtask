@@ -137,3 +137,16 @@ class TestDispatch:
         result = sagtask._handle_sag_task_dispatch({"subtask_id": "st-1"})
         assert result["ok"] is False
         assert "error" in result
+
+    def test_dispatch_max_context_len(self, isolated_sagtask, mock_git):
+        self._create_task_with_plan(isolated_sagtask, mock_git)
+        plan = self._get_plan(isolated_sagtask)
+        subtask_id = plan["subtasks"][0]["id"]
+        result = sagtask._handle_sag_task_dispatch({
+            "sag_task_id": "test-dispatch",
+            "subtask_id": subtask_id,
+            "max_context_len": 100,
+        })
+        assert result["ok"] is True
+        assert len(result["context"]) <= 100 + len("\n\n... (truncated)")
+        assert "truncated" in result["context"]
