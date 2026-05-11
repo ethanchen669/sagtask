@@ -21,6 +21,9 @@ from ._plan import (
     _handle_sag_task_relate,
     _handle_sag_task_verify,
 )
+from ._orchestration import (
+    _handle_sag_task_dispatch,
+)
 
 _tool_handlers = {
     "sag_task_create": _handle_sag_task_create,
@@ -37,6 +40,7 @@ _tool_handlers = {
     "sag_task_verify": _handle_sag_task_verify,
     "sag_task_plan": _handle_sag_task_plan,
     "sag_task_plan_update": _handle_sag_task_plan_update,
+    "sag_task_dispatch": _handle_sag_task_dispatch,
 }
 
 __all__ = [
@@ -55,4 +59,5 @@ __all__ = [
     "_handle_sag_task_verify",
     "_handle_sag_task_plan",
     "_handle_sag_task_plan_update",
+    "_handle_sag_task_dispatch",
 ]

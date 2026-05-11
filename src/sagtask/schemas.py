@@ -355,6 +355,27 @@ TASK_PLAN_UPDATE_SCHEMA = {
     },
 }
 
+TASK_DISPATCH_SCHEMA: Dict[str, Any] = {
+    "name": "sag_task_dispatch",
+    "description": "Dispatch a subtask for execution. Builds a self-contained context "
+    "prompt with subtask details, methodology instructions, and dependency status. "
+    "Marks the subtask as in-progress. Use the returned context to dispatch a subagent.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "sag_task_id": {
+                "type": "string",
+                "description": "Task ID. Defaults to active task.",
+            },
+            "subtask_id": {
+                "type": "string",
+                "description": "Subtask ID from the plan to dispatch.",
+            },
+        },
+        "required": ["subtask_id"],
+    },
+}
+
 TASK_PLAN_SCHEMA = {
     "name": "sag_task_plan",
     "description": "Generate a structured subtask plan for the current step. "
@@ -391,4 +412,5 @@ ALL_TOOL_SCHEMAS = [
     TASK_VERIFY_SCHEMA,
     TASK_PLAN_SCHEMA,
     TASK_PLAN_UPDATE_SCHEMA,
+    TASK_DISPATCH_SCHEMA,
 ]

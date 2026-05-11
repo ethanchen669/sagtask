@@ -33,6 +33,7 @@ from sagtask.schemas import (  # noqa: F401
     TASK_BRANCH_SCHEMA,
     TASK_COMMIT_SCHEMA,
     TASK_CREATE_SCHEMA,
+    TASK_DISPATCH_SCHEMA,
     TASK_GIT_LOG_SCHEMA,
     TASK_LIST_SCHEMA,
     TASK_PAUSE_SCHEMA,
@@ -65,6 +66,10 @@ from sagtask.handlers._plan import (  # noqa: F401
     _handle_sag_task_plan_update,
     _handle_sag_task_relate,
     _handle_sag_task_verify,
+)
+
+from sagtask.handlers._orchestration import (  # noqa: F401
+    _handle_sag_task_dispatch,
 )
 
 from sagtask.handlers import _tool_handlers  # noqa: F401
