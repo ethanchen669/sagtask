@@ -101,13 +101,37 @@ class TestDispatch:
         self._create_task_with_plan(isolated_sagtask, mock_git)
         plan = self._get_plan(isolated_sagtask)
         dep_task = next((s for s in plan["subtasks"] if s.get("depends_on")), None)
-        if dep_task:
-            result = sagtask._handle_sag_task_dispatch({
-                "sag_task_id": "test-dispatch",
-                "subtask_id": dep_task["id"],
-            })
-            assert result["ok"] is True
-            assert "depends" in result["context"].lower() or "dependency" in result["context"].lower()
+        assert dep_task is not None, "Plan should have at least one subtask with depends_on"
+        result = sagtask._handle_sag_task_dispatch({
+            "sag_task_id": "test-dispatch",
+            "subtask_id": dep_task["id"],
+        })
+        assert result["ok"] is True
+        assert "depends" in result["context"].lower() or "dependency" in result["context"].lower()
+
+    def test_dispatch_warns_on_unfinished_deps(self, isolated_sagtask, mock_git):
+        self._create_task_with_plan(isolated_sagtask, mock_git)
+        plan = self._get_plan(isolated_sagtask)
+        dep_task = next((s for s in plan["subtasks"] if s.get("depends_on")), None)
+        assert dep_task is not None
+        result = sagtask._handle_sag_task_dispatch({
+            "sag_task_id": "test-dispatch",
+            "subtask_id": dep_task["id"],
+        })
+        assert "warning" in result
+        assert "not done" in result["warning"].lower() or "depend" in result["warning"].lower()
+
+    def test_dispatch_records_timestamp(self, isolated_sagtask, mock_git):
+        self._create_task_with_plan(isolated_sagtask, mock_git)
+        plan = self._get_plan(isolated_sagtask)
+        subtask_id = plan["subtasks"][0]["id"]
+        sagtask._handle_sag_task_dispatch({
+            "sag_task_id": "test-dispatch",
+            "subtask_id": subtask_id,
+        })
+        updated_plan = self._get_plan(isolated_sagtask)
+        st = next(s for s in updated_plan["subtasks"] if s["id"] == subtask_id)
+        assert "dispatched_at" in st
 
     def test_dispatch_no_task(self, isolated_sagtask, mock_git):
         result = sagtask._handle_sag_task_dispatch({"subtask_id": "st-1"})

@@ -171,7 +171,7 @@ def _handle_sag_task_dispatch(args: Dict[str, Any]) -> Dict[str, Any]:
 
     was_in_progress = subtask["status"] == "in_progress"
     updated_subtasks = [
-        {**s, "status": "in_progress"} if s["id"] == subtask_id else s
+        {**s, "status": "in_progress", "dispatched_at": _utcnow_iso()} if s["id"] == subtask_id else s
         for s in plan["subtasks"]
     ]
     plan = {**plan, "subtasks": updated_subtasks}
@@ -214,6 +214,16 @@ def _handle_sag_task_dispatch(args: Dict[str, Any]) -> Dict[str, Any]:
         result["warning"] = f"Subtask '{subtask_id}' was already in-progress. Re-dispatched."
         result["message"] = f"Re-dispatched subtask '{subtask_id}'."
 
+    # Warn if dependencies are not done
+    unfinished_deps = [
+        d for d in subtask.get("depends_on", [])
+        if any(s["id"] == d and s["status"] != "done" for s in plan["subtasks"])
+    ]
+    if unfinished_deps:
+        dep_warning = f"Dependencies not done: {unfinished_deps}"
+        existing = result.get("warning", "")
+        result["warning"] = f"{existing}; {dep_warning}" if existing else dep_warning
+
     return result
 
 
@@ -225,6 +235,7 @@ def _build_review_context(
     scope: str,
     state: Dict[str, Any],
     phase_name: str = "",
+    phase_obj: Optional[Dict[str, Any]] = None,
 ) -> str:
     """Build a structured review prompt."""
     step_name = step_obj.get("name", "Unknown Step")
@@ -251,6 +262,22 @@ def _build_review_context(
     must_pass = verification.get("must_pass", False)
     if must_pass:
         lines.append("- **MUST PASS** before advancing")
+
+    # Phase/full scope: show all steps in the phase
+    if scope in ("phase", "full") and phase_obj:
+        phase_steps = phase_obj.get("steps", [])
+        if phase_steps:
+            lines.extend(["", f"### Phase Overview: {phase_obj.get('name', '')}"])
+            for s in phase_steps:
+                lines.append(f"- {s['id']}: {s.get('name', '')}")
+
+    # Full scope: show all phases
+    if scope == "full":
+        phases = state.get("phases", [])
+        if len(phases) > 1:
+            lines.extend(["", "### All Phases"])
+            for ph in phases:
+                lines.append(f"- {ph['id']}: {ph.get('name', '')} ({len(ph.get('steps', []))} steps)")
 
     methodology = step_obj.get("methodology", {}).get("type", "none")
     lines.extend(["", "### Stage 2: Code Quality"])
@@ -313,13 +340,15 @@ def _handle_sag_task_review(args: Dict[str, Any]) -> Dict[str, Any]:
     if not step_obj:
         return {"ok": False, "error": "Cannot find current step in task phases."}
 
-    # Find the current phase name for the step
+    # Find the current phase for the step
     phase_name = ""
+    phase_obj = None
     step_id = step_obj.get("id")
     for phase in state.get("phases", []):
         for s in phase.get("steps", []):
             if s.get("id") == step_id:
                 phase_name = phase.get("name", "")
+                phase_obj = phase
                 break
         if phase_name:
             break
@@ -329,6 +358,7 @@ def _handle_sag_task_review(args: Dict[str, Any]) -> Dict[str, Any]:
         scope=scope,
         state=state,
         phase_name=phase_name,
+        phase_obj=phase_obj,
     )
 
     return {
