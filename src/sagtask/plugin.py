@@ -247,6 +247,53 @@ class SagTaskPlugin:
         result = handler(args)
         return json.dumps(result, ensure_ascii=False)
 
+    def create_worktree(self, task_id: str, subtask_id: str) -> Optional[Path]:
+        """Create a git worktree for isolated subtask execution.
+
+        Returns the worktree path, or None on failure.
+        """
+        task_root = self.get_task_root(task_id)
+        worktree_dir = task_root / ".sag_worktrees" / subtask_id
+        if worktree_dir.exists():
+            return worktree_dir
+
+        branch_name = f"worktree/{subtask_id}"
+        try:
+            result = subprocess.run(
+                ["git", "worktree", "add", "-b", branch_name, str(worktree_dir)],
+                cwd=str(task_root),
+                capture_output=True,
+                text=True,
+                timeout=_SUBPROCESS_TIMEOUT,
+            )
+            if result.returncode != 0:
+                logger.warning("git worktree add failed: %s", result.stderr)
+                return None
+            return worktree_dir
+        except Exception as e:
+            logger.warning("Failed to create worktree: %s", e)
+            return None
+
+    def remove_worktree(self, task_id: str, subtask_id: str) -> bool:
+        """Remove a git worktree after subtask completion."""
+        task_root = self.get_task_root(task_id)
+        worktree_dir = task_root / ".sag_worktrees" / subtask_id
+        if not worktree_dir.exists():
+            return True
+
+        try:
+            result = subprocess.run(
+                ["git", "worktree", "remove", str(worktree_dir), "--force"],
+                cwd=str(task_root),
+                capture_output=True,
+                text=True,
+                timeout=_SUBPROCESS_TIMEOUT,
+            )
+            return result.returncode == 0
+        except Exception as e:
+            logger.warning("Failed to remove worktree: %s", e)
+            return False
+
     def shutdown(self) -> None:
         logger.debug("SagTaskPlugin shutting down")
 
