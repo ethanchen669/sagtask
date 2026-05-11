@@ -1,34 +1,15 @@
 """SagTask — Task management plugin for Hermes Agent.
 
 Per-task Git repos with human-in-the-loop approval gates and cross-session
-recovery. SagTask overlays task-management context on top of any existing
-memory provider — it does NOT replace it.
-
-INSTALLATION (user plugin):
-  git clone https://github.com/ethanchen669/sagtask.git ~/.hermes/plugins/sagtask
-  Restart the Hermes gateway.
-
-STORAGE LAYOUT:
-  ~/.hermes/sag_tasks/<task_id>/
-  ├── .git/                           ← Task Git repo (lazy init)
-  ├── .gitignore                      ← Ignores: .sag_task_state.json, .sag_artifacts/, .sag_executions/
-  ├── .sag_task_state.json            ← Machine-readable state (NOT in Git)
-  ├── src/                            ← ✅ In Git
-  ├── tests/                          ← ✅ In Git
-  ├── docs/                           ← ✅ In Git
-  ├── .sag_plans/                     ← ✅ In Git (subtask plans are valuable artifacts)
-  ├── .sag_artifacts/                 ← ⚠️ Git-ignored (manual cleanup)
-  └── .sag_executions/                ← ⚠️ Git-ignored (snapshot on pause)
-SagTask — user plugin (standalone, NOT a memory provider).
-Context is injected via pre_llm_call hook.
+recovery. This is a thin re-export layer; logic lives in submodules:
+  hooks.py, plugin.py, schemas.py, _utils.py, handlers/.
 """
 
 from __future__ import annotations
 
 import logging
 import subprocess  # noqa: F401 — re-exported for test mock targets (conftest patches sagtask.subprocess.run)
-from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +25,6 @@ from ._utils import (  # noqa: E402
     _validate_task_id,
 )
 from . import _utils  # noqa: E402
-
 
 from sagtask.schemas import (  # noqa: F401
     ALL_TOOL_SCHEMAS,
@@ -64,21 +44,7 @@ from sagtask.schemas import (  # noqa: F401
     TASK_VERIFY_SCHEMA,
 )
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Singleton instance — set by register(), used by tool handlers
-# ─────────────────────────────────────────────────────────────────────────────
-
-# Backward-compat alias — the canonical storage lives in _utils._sagtask_instance.
-# Tests do ``sagtask._sagtask_instance = None`` so we keep this variable here.
-_sagtask_instance: Optional["SagTaskPlugin"] = None
-
-
 from sagtask.plugin import SagTaskPlugin  # noqa: F401
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Tool handlers — extracted to sagtask.handlers subpackage
-# ─────────────────────────────────────────────────────────────────────────────
-
 from sagtask.handlers._lifecycle import (  # noqa: F401
     _handle_sag_task_advance,
     _handle_sag_task_approve,
@@ -87,21 +53,12 @@ from sagtask.handlers._lifecycle import (  # noqa: F401
     _handle_sag_task_resume,
     _handle_sag_task_status,
 )
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Git handlers — extracted to handlers/_git.py
-# ─────────────────────────────────────────────────────────────────────────────
-
 from sagtask.handlers._git import (  # noqa: F401
     _handle_sag_task_branch,
     _handle_sag_task_commit,
     _handle_sag_task_git_log,
     _handle_sag_task_list,
 )
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Plan handlers — extracted to handlers/_plan.py
-# ─────────────────────────────────────────────────────────────────────────────
 
 from sagtask.handlers._plan import (  # noqa: F401
     _handle_sag_task_plan,
@@ -110,83 +67,14 @@ from sagtask.handlers._plan import (  # noqa: F401
     _handle_sag_task_verify,
 )
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Handler dispatch map — used by register() to call ctx.register_tool()
-# ─────────────────────────────────────────────────────────────────────────────
-
 from sagtask.handlers import _tool_handlers  # noqa: F401
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Hook callbacks — registered via ctx.register_hook()
-# ─────────────────────────────────────────────────────────────────────────────
-
-def _on_pre_llm_call(
-    session_id: str,
-    user_message: str,
-    conversation_history: List[Any],
-    is_first_turn: bool,
-    model: str,
-    platform: str,
-    sender_id: str,
-    **kwargs,
-) -> Dict[str, Any]:
-    """pre_llm_call hook — inject task context before each LLM call.
-
-    Returns {"context": "..."} to be appended to the user message,
-    or {} to skip injection.
-    """
-    p = _get_provider()
-
-    # Ensure projects root is initialized
-    if p._projects_root is None:
-        hermes_home = kwargs.get("hermes_home")
-        if hermes_home:
-            p._hermes_home = Path(hermes_home)
-        else:
-            p._hermes_home = Path.home() / ".hermes"
-        p._projects_root = p._hermes_home / "sag_tasks"
-        p._projects_root.mkdir(parents=True, exist_ok=True)
-        p._restore_active_task()
-
-    if not p._active_task_id:
-        return {}
-
-    state = p.load_task_state(p._active_task_id)
-    if not state:
-        return {}
-
-    context_text = p._build_task_context(state, include_methodology=True)
-    return {"context": context_text}
+# ── Hook callbacks — re-exported from hooks.py ───────────────────────────────
+from sagtask.hooks import _on_pre_llm_call, _on_session_start  # noqa: F401
 
 
-def _on_session_start(
-    session_id: str,
-    model: str,
-    platform: str,
-    **kwargs,
-) -> None:
-    """on_session_start hook — restore active task marker on session start."""
-    p = _get_provider()
-    if p._projects_root is None:
-        hermes_home = kwargs.get("hermes_home")
-        if hermes_home:
-            p._hermes_home = Path(hermes_home)
-        else:
-            p._hermes_home = Path.home() / ".hermes"
-        p._projects_root = p._hermes_home / "sag_tasks"
-        p._projects_root.mkdir(parents=True, exist_ok=True)
-    p._restore_active_task()
-    logger.debug(
-        "SagTask on_session_start: session_id=%s, active_task=%s",
-        session_id,
-        p._active_task_id,
-    )
-
-
-# ----------------------------------------------------------------------------
-# Plugin registration — singleton guard + hook + tool registration
-# -----------------------------------------------------------------------------
+# Backward-compat alias — tests do ``sagtask._sagtask_instance = None``.
+_sagtask_instance: Optional["SagTaskPlugin"] = None
 
 
 def register(ctx) -> None:
