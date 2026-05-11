@@ -238,6 +238,88 @@ def _handle_sag_task_plan(args: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _handle_sag_task_brainstorm(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Build brainstorm context or record design selection."""
+    from ._orchestration import _build_brainstorm_context
+
+    p = _get_provider()
+    task_id = args.get("sag_task_id") or p._active_task_id
+    selected_option = args.get("selected_option")
+    design_title = args.get("design_title", "")
+    design_description = args.get("design_description", "")
+
+    if not task_id:
+        return {"ok": False, "error": "No active task."}
+
+    state = p.load_task_state(task_id)
+    if not state:
+        return {"ok": False, "error": f"Task '{task_id}' not found."}
+
+    step_obj = p._get_current_step_object(state)
+    if not step_obj:
+        return {"ok": False, "error": "Cannot find current step in task phases."}
+
+    ms = state.get("methodology_state", {})
+    current_phase = ms.get("brainstorm_phase", "explore")
+
+    # If recording a selection
+    if selected_option is not None:
+        if current_phase == "select":
+            return {
+                "ok": True,
+                "sag_task_id": task_id,
+                "brainstorm_phase": "select",
+                "warning": "Design already selected. Use plan_update to track implementation progress.",
+                "message": f"Design option {ms.get('brainstorm_selected')} was already selected.",
+            }
+
+        selected_design = {}
+        if design_title:
+            selected_design = {"title": design_title, "description": design_description}
+
+        state = {
+            **state,
+            "methodology_state": {
+                **ms,
+                "brainstorm_phase": "select",
+                "brainstorm_selected": selected_option,
+                "brainstorm_selected_design": selected_design,
+            },
+        }
+        p.save_task_state(task_id, state)
+
+        return {
+            "ok": True,
+            "sag_task_id": task_id,
+            "brainstorm_phase": "select",
+            "selected_option": selected_option,
+            "selected_design": selected_design,
+            "message": f"Selected design option {selected_option}. Proceed with implementation.",
+        }
+
+    # Building brainstorm context (explore phase)
+    if current_phase == "explore" and not ms.get("brainstorm_phase"):
+        state = {
+            **state,
+            "methodology_state": {
+                **ms,
+                "brainstorm_phase": "explore",
+            },
+        }
+        p.save_task_state(task_id, state)
+
+    context = _build_brainstorm_context(step_obj=step_obj, state=state)
+
+    return {
+        "ok": True,
+        "sag_task_id": task_id,
+        "brainstorm_phase": ms.get("brainstorm_phase", "explore"),
+        "step_id": step_obj.get("id", "unknown"),
+        "context": context,
+        "message": "Use this context to generate design options. Call again with selected_option to record choice.",
+    }
+
+
 def _handle_sag_task_plan_update(args: Dict[str, Any]) -> Dict[str, Any]:
     p = _get_provider()
     task_id = args.get("sag_task_id") or p._active_task_id
