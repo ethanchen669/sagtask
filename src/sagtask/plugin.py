@@ -278,6 +278,22 @@ class SagTaskPlugin:
                 tdd_phase = ms.get("tdd_phase")
                 if tdd_phase and methodology == "tdd":
                     lines.append(f"- TDD phase: {tdd_phase.upper()}")
+                brainstorm_phase = ms.get("brainstorm_phase")
+                if brainstorm_phase and methodology == "brainstorm":
+                    selected = ms.get("brainstorm_selected")
+                    phase_text = brainstorm_phase
+                    if selected:
+                        phase_text = f"selected option {selected}"
+                    lines.append(f"- Brainstorm phase: {phase_text}")
+                debug_phase = ms.get("debug_phase")
+                if debug_phase and methodology == "debug":
+                    hypothesis = ms.get("debug_hypothesis", "")
+                    phase_text = debug_phase
+                    if hypothesis and debug_phase == "diagnose":
+                        phase_text = f"diagnosing: {hypothesis}"
+                    elif debug_phase == "fix":
+                        phase_text = "fixing"
+                    lines.append(f"- Debug phase: {phase_text}")
                 progress = ms.get("subtask_progress", {})
                 total = progress.get("total", 0)
                 completed = progress.get("completed", 0)

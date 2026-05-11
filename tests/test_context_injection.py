@@ -118,3 +118,124 @@ class TestContextInjection:
             is_first_turn=True, model="test", platform="test", sender_id="test",
         )
         assert "dispatch" in result["context"].lower() or "in-progress" in result["context"].lower()
+
+    def test_context_shows_brainstorm_phase(self, isolated_sagtask, mock_git):
+        """Context should show brainstorm phase when brainstorm methodology is active."""
+        sagtask._handle_sag_task_create({
+            "sag_task_id": "test-ctx-brain",
+            "name": "Brainstorm Context",
+            "phases": [{
+                "id": "p1", "name": "P1",
+                "steps": [{
+                    "id": "s1", "name": "Design Module",
+                    "methodology": {"type": "brainstorm"},
+                }],
+            }],
+        })
+        sagtask._handle_sag_task_brainstorm({"sag_task_id": "test-ctx-brain"})
+        isolated_sagtask._active_task_id = "test-ctx-brain"
+        result = sagtask._on_pre_llm_call(
+            session_id="s1", user_message="hello", conversation_history=[],
+            is_first_turn=True, model="test", platform="test", sender_id="test",
+        )
+        assert "brainstorm" in result["context"].lower() or "explore" in result["context"].lower()
+
+    def test_context_shows_brainstorm_selected(self, isolated_sagtask, mock_git):
+        """Context should show selected option after brainstorm selection."""
+        sagtask._handle_sag_task_create({
+            "sag_task_id": "test-ctx-brain-sel",
+            "name": "Brainstorm Selected",
+            "phases": [{
+                "id": "p1", "name": "P1",
+                "steps": [{
+                    "id": "s1", "name": "Design Module",
+                    "methodology": {"type": "brainstorm"},
+                }],
+            }],
+        })
+        sagtask._handle_sag_task_brainstorm({"sag_task_id": "test-ctx-brain-sel"})
+        sagtask._handle_sag_task_brainstorm({
+            "sag_task_id": "test-ctx-brain-sel",
+            "selected_option": 2,
+        })
+        isolated_sagtask._active_task_id = "test-ctx-brain-sel"
+        result = sagtask._on_pre_llm_call(
+            session_id="s1", user_message="hello", conversation_history=[],
+            is_first_turn=True, model="test", platform="test", sender_id="test",
+        )
+        assert "selected option 2" in result["context"].lower()
+
+    def test_context_shows_debug_phase(self, isolated_sagtask, mock_git):
+        """Context should show debug phase when debug methodology is active."""
+        sagtask._handle_sag_task_create({
+            "sag_task_id": "test-ctx-debug",
+            "name": "Debug Context",
+            "phases": [{
+                "id": "p1", "name": "P1",
+                "steps": [{
+                    "id": "s1", "name": "Fix Bug",
+                    "methodology": {"type": "debug"},
+                }],
+            }],
+        })
+        sagtask._handle_sag_task_debug({"sag_task_id": "test-ctx-debug"})
+        isolated_sagtask._active_task_id = "test-ctx-debug"
+        result = sagtask._on_pre_llm_call(
+            session_id="s1", user_message="hello", conversation_history=[],
+            is_first_turn=True, model="test", platform="test", sender_id="test",
+        )
+        assert "debug" in result["context"].lower() or "reproduce" in result["context"].lower()
+
+    def test_context_shows_debug_diagnose_with_hypothesis(self, isolated_sagtask, mock_git):
+        """Context should show hypothesis in diagnose phase."""
+        sagtask._handle_sag_task_create({
+            "sag_task_id": "test-ctx-debug-hyp",
+            "name": "Debug Hypothesis",
+            "phases": [{
+                "id": "p1", "name": "P1",
+                "steps": [{
+                    "id": "s1", "name": "Fix Bug",
+                    "methodology": {"type": "debug"},
+                }],
+            }],
+        })
+        sagtask._handle_sag_task_debug({"sag_task_id": "test-ctx-debug-hyp"})
+        sagtask._handle_sag_task_debug({
+            "sag_task_id": "test-ctx-debug-hyp",
+            "hypothesis": "Null pointer on empty input",
+        })
+        isolated_sagtask._active_task_id = "test-ctx-debug-hyp"
+        result = sagtask._on_pre_llm_call(
+            session_id="s1", user_message="hello", conversation_history=[],
+            is_first_turn=True, model="test", platform="test", sender_id="test",
+        )
+        assert "diagnosing" in result["context"].lower()
+
+    def test_context_shows_debug_fix_phase(self, isolated_sagtask, mock_git):
+        """Context should show 'fixing' in fix phase."""
+        sagtask._handle_sag_task_create({
+            "sag_task_id": "test-ctx-debug-fix",
+            "name": "Debug Fix",
+            "phases": [{
+                "id": "p1", "name": "P1",
+                "steps": [{
+                    "id": "s1", "name": "Fix Bug",
+                    "methodology": {"type": "debug"},
+                }],
+            }],
+        })
+        sagtask._handle_sag_task_debug({"sag_task_id": "test-ctx-debug-fix"})
+        sagtask._handle_sag_task_debug({
+            "sag_task_id": "test-ctx-debug-fix",
+            "hypothesis": "Root cause",
+        })
+        sagtask._handle_sag_task_debug({
+            "sag_task_id": "test-ctx-debug-fix",
+            "fix_description": "Added null check",
+        })
+        isolated_sagtask._active_task_id = "test-ctx-debug-fix"
+        result = sagtask._on_pre_llm_call(
+            session_id="s1", user_message="hello", conversation_history=[],
+            is_first_turn=True, model="test", platform="test", sender_id="test",
+        )
+        assert "fixing" in result["context"].lower()
