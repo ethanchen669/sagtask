@@ -38,38 +38,20 @@ from typing import Any, Dict, List, Optional, Set
 
 logger = logging.getLogger(__name__)
 
-SAGTASK_PROVIDER = "sagtask"
-
-_TASK_ID_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$")
-
-
-def _validate_task_id(task_id: str) -> str | None:
-    """Validate task_id format. Returns error message or None if valid."""
-    if not task_id:
-        return "task_id cannot be empty"
-    if len(task_id) > 64:
-        return "task_id must be 64 characters or less"
-    if not _TASK_ID_RE.match(task_id):
-        return "Invalid task_id format"
-    return None
-
-
-_DEFAULT_GITHUB_OWNER = "ethanchen669"
-
-
-def _get_github_owner() -> str:
-    """Return GitHub owner from SAGTASK_GITHUB_OWNER env var or default."""
-    return os.environ.get("SAGTASK_GITHUB_OWNER", _DEFAULT_GITHUB_OWNER)
-
-
-_SUBPROCESS_TIMEOUT = 30  # seconds
-_VERIFY_OUTPUT_MAX_LEN = 2000
-
-SCHEMA_VERSION = 2
-
-
-def _utcnow_iso() -> str:
-    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+# ── Re-exported from _utils for backward compatibility ────────────────────────
+from ._utils import (  # noqa: E402
+    SAGTASK_PROVIDER,
+    SCHEMA_VERSION,
+    _DEFAULT_GITHUB_OWNER,
+    _SUBPROCESS_TIMEOUT,
+    _TASK_ID_RE,
+    _VERIFY_OUTPUT_MAX_LEN,
+    _get_github_owner,
+    _get_provider,
+    _utcnow_iso,
+    _validate_task_id,
+)
+from . import _utils  # noqa: E402
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -466,14 +448,9 @@ ALL_TOOL_SCHEMAS = [
 # Singleton instance — set by register(), used by tool handlers
 # ─────────────────────────────────────────────────────────────────────────────
 
+# Backward-compat alias — the canonical storage lives in _utils._sagtask_instance.
+# Tests do ``sagtask._sagtask_instance = None`` so we keep this variable here.
 _sagtask_instance: Optional["SagTaskPlugin"] = None
-
-
-def _get_provider() -> "SagTaskPlugin":
-    """Get the registered SagTaskPlugin instance (set by register())."""
-    if _sagtask_instance is None:
-        raise RuntimeError("SagTaskPlugin not registered. Call register(ctx) first.")
-    return _sagtask_instance
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2000,6 +1977,7 @@ def register(ctx) -> None:
         return
 
     _sagtask_instance = SagTaskPlugin()
+    _utils._sagtask_instance = _sagtask_instance
 
     # ── Tools ────────────────────────────────────────────────────────────────
     for schema in ALL_TOOL_SCHEMAS:
