@@ -316,6 +316,62 @@ def _build_review_context(
     return "\n".join(lines)
 
 
+# -- Brainstorm context builder -------------------------------------------------
+
+
+def _build_brainstorm_context(
+    step_obj: Dict[str, Any],
+    state: Dict[str, Any],
+) -> str:
+    """Build a structured brainstorm prompt for design exploration."""
+    step_name = step_obj.get("name", "Unknown Step")
+    step_desc = step_obj.get("description", "")
+
+    lines = [
+        f"## Design Brainstorm: {step_name}",
+        "",
+        "### Step Requirements",
+    ]
+    if step_desc:
+        lines.append(f"- {step_desc}")
+    else:
+        lines.append(f"- {step_name}")
+
+    methodology_config = step_obj.get("methodology", {}).get("config", {})
+    min_options = methodology_config.get("min_options", 3)
+
+    lines.extend([
+        "",
+        "### Instructions",
+        f"Generate at least {min_options} distinct design options for this step.",
+        "",
+        "For each option, provide:",
+        "- **Title**: A concise name for the design approach",
+        "- **Description**: 2-3 sentences explaining the approach",
+        "- **Trade-offs**: Pros and cons of this approach",
+        "",
+        "Present options as a numbered list. After presenting, ask the user to select one.",
+        "",
+        "### Design Evaluation Criteria",
+        "- Simplicity: Is the approach easy to understand and maintain?",
+        "- Correctness: Does it handle all requirements and edge cases?",
+        "- Performance: Are there any performance concerns?",
+        "- Extensibility: Can the design accommodate future changes?",
+    ])
+
+    verification = step_obj.get("verification", {})
+    commands = verification.get("commands", [])
+    if commands:
+        lines.extend([
+            "",
+            "### Verification",
+            "After implementation, these commands must pass:",
+            *[f"```bash\n{cmd}\n```" for cmd in commands],
+        ])
+
+    return "\n".join(lines)
+
+
 def _handle_sag_task_review(args: Dict[str, Any]) -> Dict[str, Any]:
     """Build a structured review prompt for the current step."""
     p = _get_provider()

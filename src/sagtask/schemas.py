@@ -423,6 +423,35 @@ TASK_REVIEW_SCHEMA = {
     },
 }
 
+TASK_BRAINSTORM_SCHEMA = {
+    "name": "sag_task_brainstorm",
+    "description": "Build a structured brainstorm prompt for design exploration. "
+    "Returns context for generating design options. Call with selected_option to record user's choice.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "sag_task_id": {
+                "type": "string",
+                "description": "Task ID. Defaults to active task.",
+            },
+            "selected_option": {
+                "type": "integer",
+                "description": "Which design option the user selected (1-indexed). "
+                "Omit to generate options; include to record selection.",
+            },
+            "design_title": {
+                "type": "string",
+                "description": "Title of the selected design (optional, for recording).",
+            },
+            "design_description": {
+                "type": "string",
+                "description": "Description of the selected design (optional, for recording).",
+            },
+        },
+        "required": [],
+    },
+}
+
 ALL_TOOL_SCHEMAS = [
     TASK_CREATE_SCHEMA,
     TASK_STATUS_SCHEMA,
@@ -440,4 +469,5 @@ ALL_TOOL_SCHEMAS = [
     TASK_PLAN_UPDATE_SCHEMA,
     TASK_DISPATCH_SCHEMA,
     TASK_REVIEW_SCHEMA,
+    TASK_BRAINSTORM_SCHEMA,
 ]
