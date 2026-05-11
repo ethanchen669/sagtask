@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - `sag_task_dispatch` tool — build subagent context and dispatch subtasks for execution
 - `sag_task_review` tool — two-stage code review (spec compliance + quality)
+- `sag_task_brainstorm` tool — structured design exploration with option selection
+- `sag_task_debug` tool — systematic debugging workflow (reproduce → diagnose → fix)
+- Brainstorm and debug phase tracking in context injection
+- `_recommend_methodology()` helper for auto-suggesting methodology from step descriptions
+- Git worktree integration for isolated subtask dispatch (`use_worktree` param)
+- `create_worktree`/`remove_worktree` methods on SagTaskPlugin
 - Active dispatch status in context injection
 - Orchestration handlers module (`handlers/_orchestration.py`)
 - `sag_task_plan` tool — generate structured subtask plans per step
