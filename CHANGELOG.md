@@ -5,6 +5,19 @@ All notable changes to SagTask will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- `sag_task_dispatch` tool — build subagent context and dispatch subtasks for execution
+- `sag_task_review` tool — two-stage code review (spec compliance + quality)
+- Active dispatch status in context injection
+- Orchestration handlers module (`handlers/_orchestration.py`)
+- `sag_task_plan` tool — generate structured subtask plans per step
+- `sag_task_plan_update` tool — track subtask completion with progress sync
+- TDD state machine — auto red/green phase transitions on verify
+- Plan progress injection in LLM context ("3/7 subtasks completed")
+- `.sag_plans/<step_id>.json` storage for Git-tracked plans
+
 ## [1.3.0] - 2026-05-08
 
 ### Added

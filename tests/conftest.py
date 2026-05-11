@@ -9,13 +9,16 @@ import sagtask
 def isolated_sagtask(tmp_path):
     """Create an isolated SagTaskPlugin with tmp_path as projects_root."""
     sagtask._sagtask_instance = None
+    sagtask._utils._sagtask_instance = None
     plugin = sagtask.SagTaskPlugin()
     plugin._hermes_home = tmp_path / "hermes"
     plugin._projects_root = tmp_path / "hermes" / "sag_tasks"
     plugin._projects_root.mkdir(parents=True)
     sagtask._sagtask_instance = plugin
+    sagtask._utils._sagtask_instance = plugin
     yield plugin
     sagtask._sagtask_instance = None
+    sagtask._utils._sagtask_instance = None
 
 
 @pytest.fixture
@@ -35,6 +38,33 @@ def sample_phases():
             "name": "Design",
             "steps": [
                 {"id": "step-1", "name": "Data Model"},
+                {"id": "step-2", "name": "Migration Script"},
+            ],
+        },
+        {
+            "id": "phase-2",
+            "name": "Implementation",
+            "steps": [
+                {"id": "step-3", "name": "BOM Engine"},
+            ],
+        },
+    ]
+
+
+@pytest.fixture
+def sample_phases_with_methodology():
+    """Test phases with methodology and verification configured."""
+    return [
+        {
+            "id": "phase-1",
+            "name": "Design",
+            "steps": [
+                {
+                    "id": "step-1",
+                    "name": "Data Model",
+                    "methodology": {"type": "tdd", "config": {"coverage_threshold": 80}},
+                    "verification": {"commands": ["pytest"], "must_pass": True},
+                },
                 {"id": "step-2", "name": "Migration Script"},
             ],
         },
