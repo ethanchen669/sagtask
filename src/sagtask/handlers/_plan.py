@@ -320,6 +320,89 @@ def _handle_sag_task_brainstorm(args: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _handle_sag_task_debug(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Build debug context or record hypothesis/fix."""
+    from ._orchestration import _build_debug_context
+
+    p = _get_provider()
+    task_id = args.get("sag_task_id") or p._active_task_id
+    hypothesis = args.get("hypothesis", "")
+    fix_description = args.get("fix_description", "")
+
+    if not task_id:
+        return {"ok": False, "error": "No active task."}
+
+    state = p.load_task_state(task_id)
+    if not state:
+        return {"ok": False, "error": f"Task '{task_id}' not found."}
+
+    step_obj = p._get_current_step_object(state)
+    if not step_obj:
+        return {"ok": False, "error": "Cannot find current step in task phases."}
+
+    ms = state.get("methodology_state", {})
+
+    # Record fix
+    if fix_description:
+        state = {
+            **state,
+            "methodology_state": {
+                **ms,
+                "debug_phase": "fix",
+                "debug_fix": fix_description,
+            },
+        }
+        p.save_task_state(task_id, state)
+        return {
+            "ok": True,
+            "sag_task_id": task_id,
+            "debug_phase": "fix",
+            "fix_description": fix_description,
+            "message": "Fix recorded. Run sag_task_verify to validate.",
+        }
+
+    # Record hypothesis
+    if hypothesis:
+        state = {
+            **state,
+            "methodology_state": {
+                **ms,
+                "debug_phase": "diagnose",
+                "debug_hypothesis": hypothesis,
+            },
+        }
+        p.save_task_state(task_id, state)
+        return {
+            "ok": True,
+            "sag_task_id": task_id,
+            "debug_phase": "diagnose",
+            "hypothesis": hypothesis,
+            "message": "Hypothesis recorded. Verify it, then call with fix_description.",
+        }
+
+    # Build debug context
+    if not ms.get("debug_phase"):
+        state = {
+            **state,
+            "methodology_state": {
+                **ms,
+                "debug_phase": "reproduce",
+            },
+        }
+        p.save_task_state(task_id, state)
+
+    context = _build_debug_context(step_obj=step_obj, state=state)
+
+    return {
+        "ok": True,
+        "sag_task_id": task_id,
+        "debug_phase": ms.get("debug_phase", "reproduce"),
+        "step_id": step_obj.get("id", "unknown"),
+        "context": context,
+        "message": "Follow the debug methodology. Record hypothesis or fix as you progress.",
+    }
+
+
 def _handle_sag_task_plan_update(args: Dict[str, Any]) -> Dict[str, Any]:
     p = _get_provider()
     task_id = args.get("sag_task_id") or p._active_task_id

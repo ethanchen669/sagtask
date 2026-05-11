@@ -372,6 +372,89 @@ def _build_brainstorm_context(
     return "\n".join(lines)
 
 
+# -- Debug context builder ------------------------------------------------------
+
+
+def _build_debug_context(
+    step_obj: Dict[str, Any],
+    state: Dict[str, Any],
+) -> str:
+    """Build a structured debug prompt for systematic debugging."""
+    step_name = step_obj.get("name", "Unknown Step")
+    step_desc = step_obj.get("description", "")
+
+    ms = state.get("methodology_state", {})
+    debug_phase = ms.get("debug_phase", "reproduce")
+    hypothesis = ms.get("debug_hypothesis", "")
+    fix = ms.get("debug_fix", "")
+
+    lines = [
+        f"## Debugging: {step_name}",
+        f"**Current phase:** {debug_phase}",
+        "",
+        "### Issue Description",
+    ]
+    if step_desc:
+        lines.append(f"- {step_desc}")
+    else:
+        lines.append(f"- {step_name}")
+
+    lines.extend([
+        "",
+        "### Debug Methodology",
+    ])
+
+    if debug_phase == "reproduce":
+        lines.extend([
+            "1. **Reproduce** the issue with a minimal test case",
+            "   - Write the smallest possible code that triggers the bug",
+            "   - Confirm the bug is reproducible",
+            "   - Document the exact error/behavior",
+            "",
+            "After reproducing, call `sag_task_debug` with `hypothesis` to record your diagnosis.",
+        ])
+    elif debug_phase == "diagnose":
+        lines.extend([
+            "1. ~~Reproduce~~ ✓",
+            f"2. **Diagnose** — Current hypothesis: *{hypothesis}*",
+            "   - Verify the hypothesis with targeted tests",
+            "   - If wrong, call `sag_task_debug` with a new hypothesis",
+            "   - If confirmed, proceed to fix",
+            "",
+            "After confirming the root cause, call `sag_task_debug` with `fix_description`.",
+        ])
+    elif debug_phase == "fix":
+        lines.extend([
+            "1. ~~Reproduce~~ ✓",
+            f"2. ~~Diagnose~~ ✓ — {hypothesis}",
+            f"3. **Fix** — Proposed fix: *{fix}*",
+            "   - Implement the minimal fix for the root cause",
+            "   - Do NOT fix symptoms; fix the underlying issue",
+            "   - Run verification to confirm the fix works",
+            "",
+            "After implementing, call `sag_task_verify` to validate.",
+        ])
+
+    last_v = ms.get("last_verification")
+    if last_v:
+        v_status = "passed" if last_v.get("passed") else "failed"
+        lines.extend([
+            "",
+            f"### Last Verification: {v_status}",
+        ])
+
+    verification = step_obj.get("verification", {})
+    commands = verification.get("commands", [])
+    if commands:
+        lines.extend([
+            "",
+            "### Verification Commands",
+            *[f"```bash\n{cmd}\n```" for cmd in commands],
+        ])
+
+    return "\n".join(lines)
+
+
 def _handle_sag_task_review(args: Dict[str, Any]) -> Dict[str, Any]:
     """Build a structured review prompt for the current step."""
     p = _get_provider()
