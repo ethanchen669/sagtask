@@ -4,12 +4,16 @@ from __future__ import annotations
 import json
 import logging
 import os
-from pathlib import Path
 from typing import Any, Dict, Optional
 
 from .._utils import _get_provider, _load_plan, _utcnow_iso
 
 logger = logging.getLogger(__name__)
+
+# Debug phase constants
+DEBUG_PHASE_REPRODUCE = "reproduce"
+DEBUG_PHASE_DIAGNOSE = "diagnose"
+DEBUG_PHASE_FIX = "fix"
 
 # -- Methodology instruction templates -------------------------------------------
 
@@ -375,6 +379,42 @@ def _build_brainstorm_context(
 # -- Debug context builder ------------------------------------------------------
 
 
+def _debug_phase_reproduce_lines() -> list[str]:
+    return [
+        "1. **Reproduce** the issue with a minimal test case",
+        "   - Write the smallest possible code that triggers the bug",
+        "   - Confirm the bug is reproducible",
+        "   - Document the exact error/behavior",
+        "",
+        "After reproducing, call `sag_task_debug` with `hypothesis` to record your diagnosis.",
+    ]
+
+
+def _debug_phase_diagnose_lines(hypothesis: str) -> list[str]:
+    return [
+        "1. ~~Reproduce~~ ✓",
+        f"2. **Diagnose** — Current hypothesis: *{hypothesis}*",
+        "   - Verify the hypothesis with targeted tests",
+        "   - If wrong, call `sag_task_debug` with a new hypothesis",
+        "   - If confirmed, proceed to fix",
+        "",
+        "After confirming the root cause, call `sag_task_debug` with `fix_description`.",
+    ]
+
+
+def _debug_phase_fix_lines(hypothesis: str, fix: str) -> list[str]:
+    return [
+        "1. ~~Reproduce~~ ✓",
+        f"2. ~~Diagnose~~ ✓ — {hypothesis}",
+        f"3. **Fix** — Proposed fix: *{fix}*",
+        "   - Implement the minimal fix for the root cause",
+        "   - Do NOT fix symptoms; fix the underlying issue",
+        "   - Run verification to confirm the fix works",
+        "",
+        "After implementing, call `sag_task_verify` to validate.",
+    ]
+
+
 def _build_debug_context(
     step_obj: Dict[str, Any],
     state: Dict[str, Any],
@@ -384,7 +424,7 @@ def _build_debug_context(
     step_desc = step_obj.get("description", "")
 
     ms = state.get("methodology_state", {})
-    debug_phase = ms.get("debug_phase", "reproduce")
+    debug_phase = ms.get("debug_phase", DEBUG_PHASE_REPRODUCE)
     hypothesis = ms.get("debug_hypothesis", "")
     fix = ms.get("debug_fix", "")
 
@@ -399,49 +439,19 @@ def _build_debug_context(
     else:
         lines.append(f"- {step_name}")
 
-    lines.extend([
-        "",
-        "### Debug Methodology",
-    ])
+    lines.extend(["", "### Debug Methodology"])
 
-    if debug_phase == "reproduce":
-        lines.extend([
-            "1. **Reproduce** the issue with a minimal test case",
-            "   - Write the smallest possible code that triggers the bug",
-            "   - Confirm the bug is reproducible",
-            "   - Document the exact error/behavior",
-            "",
-            "After reproducing, call `sag_task_debug` with `hypothesis` to record your diagnosis.",
-        ])
-    elif debug_phase == "diagnose":
-        lines.extend([
-            "1. ~~Reproduce~~ ✓",
-            f"2. **Diagnose** — Current hypothesis: *{hypothesis}*",
-            "   - Verify the hypothesis with targeted tests",
-            "   - If wrong, call `sag_task_debug` with a new hypothesis",
-            "   - If confirmed, proceed to fix",
-            "",
-            "After confirming the root cause, call `sag_task_debug` with `fix_description`.",
-        ])
-    elif debug_phase == "fix":
-        lines.extend([
-            "1. ~~Reproduce~~ ✓",
-            f"2. ~~Diagnose~~ ✓ — {hypothesis}",
-            f"3. **Fix** — Proposed fix: *{fix}*",
-            "   - Implement the minimal fix for the root cause",
-            "   - Do NOT fix symptoms; fix the underlying issue",
-            "   - Run verification to confirm the fix works",
-            "",
-            "After implementing, call `sag_task_verify` to validate.",
-        ])
+    if debug_phase == DEBUG_PHASE_REPRODUCE:
+        lines.extend(_debug_phase_reproduce_lines())
+    elif debug_phase == DEBUG_PHASE_DIAGNOSE:
+        lines.extend(_debug_phase_diagnose_lines(hypothesis))
+    elif debug_phase == DEBUG_PHASE_FIX:
+        lines.extend(_debug_phase_fix_lines(hypothesis, fix))
 
     last_v = ms.get("last_verification")
     if last_v:
         v_status = "passed" if last_v.get("passed") else "failed"
-        lines.extend([
-            "",
-            f"### Last Verification: {v_status}",
-        ])
+        lines.extend(["", f"### Last Verification: {v_status}"])
 
     verification = step_obj.get("verification", {})
     commands = verification.get("commands", [])

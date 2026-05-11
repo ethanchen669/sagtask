@@ -322,7 +322,12 @@ def _handle_sag_task_brainstorm(args: Dict[str, Any]) -> Dict[str, Any]:
 
 def _handle_sag_task_debug(args: Dict[str, Any]) -> Dict[str, Any]:
     """Build debug context or record hypothesis/fix."""
-    from ._orchestration import _build_debug_context
+    from ._orchestration import (
+        DEBUG_PHASE_DIAGNOSE,
+        DEBUG_PHASE_FIX,
+        DEBUG_PHASE_REPRODUCE,
+        _build_debug_context,
+    )
 
     p = _get_provider()
     task_id = args.get("sag_task_id") or p._active_task_id
@@ -341,52 +346,80 @@ def _handle_sag_task_debug(args: Dict[str, Any]) -> Dict[str, Any]:
         return {"ok": False, "error": "Cannot find current step in task phases."}
 
     ms = state.get("methodology_state", {})
+    current_phase = ms.get("debug_phase", DEBUG_PHASE_REPRODUCE)
 
-    # Record fix
     if fix_description:
-        state = {
-            **state,
-            "methodology_state": {
-                **ms,
-                "debug_phase": "fix",
-                "debug_fix": fix_description,
-            },
-        }
-        p.save_task_state(task_id, state)
-        return {
-            "ok": True,
-            "sag_task_id": task_id,
-            "debug_phase": "fix",
-            "fix_description": fix_description,
-            "message": "Fix recorded. Run sag_task_verify to validate.",
-        }
+        if current_phase not in (DEBUG_PHASE_DIAGNOSE, DEBUG_PHASE_FIX):
+            return {"ok": False, "error": "Must record a hypothesis before recording a fix."}
+        return _record_debug_fix(p, task_id, state, ms, fix_description)
 
-    # Record hypothesis
     if hypothesis:
-        state = {
-            **state,
-            "methodology_state": {
-                **ms,
-                "debug_phase": "diagnose",
-                "debug_hypothesis": hypothesis,
-            },
-        }
-        p.save_task_state(task_id, state)
-        return {
-            "ok": True,
-            "sag_task_id": task_id,
-            "debug_phase": "diagnose",
-            "hypothesis": hypothesis,
-            "message": "Hypothesis recorded. Verify it, then call with fix_description.",
-        }
+        if current_phase not in (DEBUG_PHASE_REPRODUCE, DEBUG_PHASE_DIAGNOSE):
+            return {"ok": False, "error": "Cannot record hypothesis in fix phase."}
+        return _record_debug_hypothesis(p, task_id, state, ms, hypothesis)
 
-    # Build debug context
+    return _build_debug_response(p, task_id, state, ms, step_obj)
+
+
+def _record_debug_fix(
+    p: Any, task_id: str, state: Dict[str, Any],
+    ms: Dict[str, Any], fix_description: str,
+) -> Dict[str, Any]:
+    """Record a fix and transition to fix phase."""
+    state = {
+        **state,
+        "methodology_state": {
+            **ms,
+            "debug_phase": "fix",
+            "debug_fix": fix_description,
+        },
+    }
+    p.save_task_state(task_id, state)
+    return {
+        "ok": True,
+        "sag_task_id": task_id,
+        "debug_phase": "fix",
+        "fix_description": fix_description,
+        "message": "Fix recorded. Run sag_task_verify to validate.",
+    }
+
+
+def _record_debug_hypothesis(
+    p: Any, task_id: str, state: Dict[str, Any],
+    ms: Dict[str, Any], hypothesis: str,
+) -> Dict[str, Any]:
+    """Record a hypothesis and transition to diagnose phase."""
+    state = {
+        **state,
+        "methodology_state": {
+            **ms,
+            "debug_phase": "diagnose",
+            "debug_hypothesis": hypothesis,
+        },
+    }
+    p.save_task_state(task_id, state)
+    return {
+        "ok": True,
+        "sag_task_id": task_id,
+        "debug_phase": "diagnose",
+        "hypothesis": hypothesis,
+        "message": "Hypothesis recorded. Verify it, then call with fix_description.",
+    }
+
+
+def _build_debug_response(
+    p: Any, task_id: str, state: Dict[str, Any],
+    ms: Dict[str, Any], step_obj: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Build and return debug context response."""
+    from ._orchestration import DEBUG_PHASE_REPRODUCE, _build_debug_context
+
     if not ms.get("debug_phase"):
         state = {
             **state,
             "methodology_state": {
                 **ms,
-                "debug_phase": "reproduce",
+                "debug_phase": DEBUG_PHASE_REPRODUCE,
             },
         }
         p.save_task_state(task_id, state)
@@ -396,7 +429,7 @@ def _handle_sag_task_debug(args: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "ok": True,
         "sag_task_id": task_id,
-        "debug_phase": ms.get("debug_phase", "reproduce"),
+        "debug_phase": ms.get("debug_phase", DEBUG_PHASE_REPRODUCE),
         "step_id": step_obj.get("id", "unknown"),
         "context": context,
         "message": "Follow the debug methodology. Record hypothesis or fix as you progress.",

@@ -4,7 +4,10 @@ import sagtask
 
 
 class TestDebug:
+    """Tests for the sag_task_debug tool and debug methodology state machine."""
+
     def _create_debug_task(self, plugin, mock_git):
+        """Create a task with a single debug-methodology step."""
         sagtask._handle_sag_task_create({
             "sag_task_id": "test-debug",
             "name": "Test Debug",
@@ -91,3 +94,49 @@ class TestDebug:
         state = isolated_sagtask.load_task_state("test-debug")
         ms = state.get("methodology_state", {})
         assert ms.get("debug_phase") == "fix"
+
+    def test_debug_fix_without_hypothesis_blocked(self, isolated_sagtask, mock_git):
+        """Submitting fix_description without a prior hypothesis should fail."""
+        self._create_debug_task(isolated_sagtask, mock_git)
+        sagtask._handle_sag_task_debug({"sag_task_id": "test-debug"})
+        result = sagtask._handle_sag_task_debug({
+            "sag_task_id": "test-debug",
+            "fix_description": "Some fix",
+        })
+        assert result["ok"] is False
+        assert "hypothesis" in result["error"].lower()
+
+    def test_debug_hypothesis_in_fix_phase_blocked(self, isolated_sagtask, mock_git):
+        """Recording hypothesis after fix phase should fail."""
+        self._create_debug_task(isolated_sagtask, mock_git)
+        sagtask._handle_sag_task_debug({"sag_task_id": "test-debug"})
+        sagtask._handle_sag_task_debug({
+            "sag_task_id": "test-debug",
+            "hypothesis": "Root cause A",
+        })
+        sagtask._handle_sag_task_debug({
+            "sag_task_id": "test-debug",
+            "fix_description": "Fixed A",
+        })
+        result = sagtask._handle_sag_task_debug({
+            "sag_task_id": "test-debug",
+            "hypothesis": "New hypothesis",
+        })
+        assert result["ok"] is False
+        assert "fix phase" in result["error"].lower()
+
+    def test_debug_hypothesis_overwrite(self, isolated_sagtask, mock_git):
+        """Submitting hypothesis twice should overwrite the previous one."""
+        self._create_debug_task(isolated_sagtask, mock_git)
+        sagtask._handle_sag_task_debug({"sag_task_id": "test-debug"})
+        sagtask._handle_sag_task_debug({
+            "sag_task_id": "test-debug",
+            "hypothesis": "First hypothesis",
+        })
+        sagtask._handle_sag_task_debug({
+            "sag_task_id": "test-debug",
+            "hypothesis": "Second hypothesis",
+        })
+        state = isolated_sagtask.load_task_state("test-debug")
+        ms = state.get("methodology_state", {})
+        assert ms.get("debug_hypothesis") == "Second hypothesis"
