@@ -71,3 +71,84 @@ def test_metrics_tool_registered():
     schema_names = [s["name"] for s in ALL_TOOL_SCHEMAS]
     assert "sag_task_metrics" in schema_names
     assert "sag_task_metrics" in _tool_handlers
+
+
+def test_verify_emits_metric(tmp_path, monkeypatch):
+    """sag_task_verify emits verify_run events to metrics log."""
+    import sagtask
+    from sagtask.handlers._plan import _handle_sag_task_verify
+
+    task_id = "test-task"
+    task_root = tmp_path / task_id
+    task_root.mkdir()
+
+    state = {
+        "sag_task_id": task_id,
+        "status": "active",
+        "current_phase_id": "p1",
+        "current_step_id": "s1",
+        "phases": [{"id": "p1", "steps": [{"id": "s1", "verification": {"commands": ["echo ok"]}}]}],
+        "methodology_state": {},
+    }
+
+    p = SagTaskPlugin()
+    p._projects_root = tmp_path
+    p._active_task_id = task_id
+    monkeypatch.setattr(sagtask._utils, "_sagtask_instance", p)
+    p.save_task_state(task_id, state)
+
+    result = _handle_sag_task_verify({"sag_task_id": task_id})
+    assert result["ok"] is True
+
+    metrics_file = task_root / ".sag_metrics.jsonl"
+    assert metrics_file.exists()
+    event = json.loads(metrics_file.read_text().strip())
+    assert event["event"] == "verify_run"
+    assert event["command"] == "echo ok"
+    assert event["passed"] is True
+    assert event["exit_code"] == 0
+
+
+def test_plan_update_emits_subtask_complete(tmp_path, monkeypatch):
+    """sag_task_plan_update emits subtask_complete when status becomes done."""
+    import sagtask
+    from sagtask.handlers._plan import _handle_sag_task_plan_update
+
+    task_id = "test-task"
+    task_root = tmp_path / task_id
+    task_root.mkdir()
+    plans_dir = task_root / ".sag_plans"
+    plans_dir.mkdir()
+
+    plan = {
+        "plan_version": 1,
+        "step_id": "s1",
+        "subtasks": [{"id": "st-1", "title": "Do thing", "status": "in_progress", "depends_on": []}],
+    }
+    (plans_dir / "s1.json").write_text(json.dumps(plan))
+
+    state = {
+        "sag_task_id": task_id,
+        "status": "active",
+        "current_phase_id": "p1",
+        "current_step_id": "s1",
+        "phases": [{"id": "p1", "steps": [{"id": "s1"}]}],
+        "methodology_state": {"plan_file": ".sag_plans/s1.json", "subtask_progress": {"total": 1, "completed": 0, "in_progress": 1}},
+    }
+
+    p = SagTaskPlugin()
+    p._projects_root = tmp_path
+    p._active_task_id = task_id
+    monkeypatch.setattr(sagtask._utils, "_sagtask_instance", p)
+    p.save_task_state(task_id, state)
+
+    result = _handle_sag_task_plan_update({"sag_task_id": task_id, "subtask_id": "st-1", "status": "done"})
+    assert result["ok"] is True
+
+    metrics_file = task_root / ".sag_metrics.jsonl"
+    assert metrics_file.exists()
+    event = json.loads(metrics_file.read_text().strip())
+    assert event["event"] == "subtask_complete"
+    assert event["subtask_id"] == "st-1"
+    assert event["old_status"] == "in_progress"
+    assert event["new_status"] == "done"

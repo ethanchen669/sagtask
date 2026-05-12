@@ -175,6 +175,13 @@ def _handle_sag_task_pause(args: Dict[str, Any]) -> Dict[str, Any]:
     }
     p.save_task_state(task_id, state)
 
+    p.emit_metric(
+        task_id, "task_pause",
+        step_id=state.get("current_step_id", ""),
+        phase_id=state.get("current_phase_id", ""),
+        reason=reason,
+    )
+
     return {
         "ok": True,
         "sag_task_id": task_id,
@@ -224,6 +231,13 @@ def _handle_sag_task_resume(args: Dict[str, Any]) -> Dict[str, Any]:
     (executions_dir / f"{resume_execution_id}.json").write_text(json.dumps(paused_ctx, indent=2, ensure_ascii=False))
 
     p.save_task_state(task_id, state)
+
+    p.emit_metric(
+        task_id, "task_resume",
+        step_id=state.get("current_step_id", ""),
+        phase_id=state.get("current_phase_id", ""),
+    )
+
     p._set_active_task(task_id)
 
     return {
@@ -334,6 +348,14 @@ def _handle_sag_task_advance(args: Dict[str, Any]) -> Dict[str, Any]:
         **({"artifacts_summary": artifacts_summary} if artifacts_summary else {}),
     }
     p.save_task_state(task_id, state)
+
+    p.emit_metric(
+        task_id, "step_advance",
+        step_id=current_step_id,
+        phase_id=current_phase_id,
+        from_step=current_step_id,
+        to_step=next_step_id,
+    )
 
     branch_name = f"step/{next_phase_id}/{next_step_id}"
     p.git_branch(task_id, branch_name)
