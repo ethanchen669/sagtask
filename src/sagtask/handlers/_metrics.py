@@ -73,6 +73,26 @@ def _compute_verification(events: List[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
+def compute_coverage_trend(coverage_values: List[int]) -> str:
+    """Compute coverage trend direction from a list of coverage percentages.
+
+    Shared by query handler and context injection to ensure consistency.
+    """
+    if len(coverage_values) < 3:
+        return "stable"
+    if len(coverage_values) >= 6:
+        recent = sum(coverage_values[-3:]) / 3
+        prior = sum(coverage_values[-6:-3]) / 3
+    else:
+        recent = sum(coverage_values[-3:]) / 3
+        prior = sum(coverage_values[:3]) / 3
+    if recent - prior > 2:
+        return "improving"
+    elif recent - prior < -2:
+        return "declining"
+    return "stable"
+
+
 def _compute_coverage(events: List[Dict[str, Any]]) -> Dict[str, Any]:
     """Compute coverage trend from verify_run events with coverage_pct."""
     coverage_values = [
@@ -82,31 +102,14 @@ def _compute_coverage(events: List[Dict[str, Any]]) -> Dict[str, Any]:
     if not coverage_values:
         return {}
 
-    current = coverage_values[-1]
-    trend = "stable"
-    if len(coverage_values) >= 6:
-        recent = sum(coverage_values[-3:]) / 3
-        prior = sum(coverage_values[-6:-3]) / 3
-        if recent - prior > 2:
-            trend = "improving"
-        elif recent - prior < -2:
-            trend = "declining"
-    elif len(coverage_values) >= 3:
-        recent = sum(coverage_values[-3:]) / 3
-        first = coverage_values[0]
-        if recent - first > 2:
-            trend = "improving"
-        elif recent - first < -2:
-            trend = "declining"
-
     return {
-        "current": current,
+        "current": coverage_values[-1],
         "history": coverage_values,
-        "trend": trend,
+        "trend": compute_coverage_trend(coverage_values),
     }
 
 
-def _compute_throughput(events: List[Dict[str, Any]]) -> Dict[str, Any]:
+def _compute_throughput(events: List[Dict[str, Any]], plan_total: int = 0) -> Dict[str, Any]:
     """Compute subtask throughput — idempotent by latest state per subtask_id."""
     complete_events = [e for e in events if e.get("event") == "subtask_complete"]
     if not complete_events:
@@ -121,9 +124,10 @@ def _compute_throughput(events: List[Dict[str, Any]]) -> Dict[str, Any]:
 
     done = sum(1 for s in latest.values() if s == "done")
     failed = sum(1 for s in latest.values() if s == "failed")
+    total = plan_total if plan_total > 0 else len(latest)
 
     return {
-        "subtasks_total": len(latest),
+        "subtasks_total": total,
         "subtasks_done": done,
         "subtasks_failed": failed,
     }
@@ -169,7 +173,8 @@ def _handle_sag_task_metrics(args: Dict[str, Any]) -> Dict[str, Any]:
             result["coverage"] = c
 
     if metric in ("throughput", "all"):
-        t = _compute_throughput(filtered)
+        plan_total = state.get("methodology_state", {}).get("subtask_progress", {}).get("total", 0)
+        t = _compute_throughput(filtered, plan_total=plan_total)
         if t:
             result["throughput"] = t
 

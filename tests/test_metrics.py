@@ -346,3 +346,98 @@ def test_full_metrics_lifecycle(tmp_path, monkeypatch):
     assert result["verification"]["total_runs"] == 2
     assert result["verification"]["passed"] == 1
     assert result["verification"]["failed"] == 1
+
+
+def test_emit_metric_ensures_gitignore(plugin, task_root):
+    """emit_metric adds .sag_metrics.jsonl to .gitignore if missing."""
+    # Simulate an existing task repo with a gitignore that lacks the metrics entry
+    gitignore = task_root / ".gitignore"
+    gitignore.write_text(".sag_task_state.json\n.sag_artifacts/\n")
+
+    with patch.object(plugin, "get_task_root", return_value=task_root):
+        plugin.emit_metric("test-task", "verify_run", step_id="s1", phase_id="p1", passed=True)
+
+    content = gitignore.read_text()
+    assert ".sag_metrics.jsonl" in content
+
+
+def test_emit_metric_no_duplicate_gitignore(plugin, task_root):
+    """emit_metric does not duplicate .sag_metrics.jsonl entry."""
+    gitignore = task_root / ".gitignore"
+    gitignore.write_text(".sag_task_state.json\n.sag_metrics.jsonl\n")
+
+    with patch.object(plugin, "get_task_root", return_value=task_root):
+        plugin.emit_metric("test-task", "verify_run", step_id="s1", phase_id="p1", passed=True)
+
+    assert gitignore.read_text().count(".sag_metrics.jsonl") == 1
+
+
+def test_throughput_uses_plan_total(tmp_path, monkeypatch):
+    """Throughput denominator uses methodology_state.subtask_progress.total when available."""
+    import sagtask
+    from sagtask.handlers._metrics import _handle_sag_task_metrics
+
+    task_id = "test-task"
+    task_root = tmp_path / task_id
+    task_root.mkdir()
+
+    events = [
+        {"ts": "2026-05-12T10:00:00Z", "event": "subtask_complete", "step_id": "s1", "phase_id": "p1", "subtask_id": "st-1", "old_status": "in_progress", "new_status": "done"},
+        {"ts": "2026-05-12T10:01:00Z", "event": "subtask_complete", "step_id": "s1", "phase_id": "p1", "subtask_id": "st-2", "old_status": "in_progress", "new_status": "done"},
+    ]
+    (task_root / ".sag_metrics.jsonl").write_text("\n".join(json.dumps(e) for e in events) + "\n")
+
+    state = {
+        "sag_task_id": task_id,
+        "status": "active",
+        "current_phase_id": "p1",
+        "current_step_id": "s1",
+        "phases": [{"id": "p1", "steps": [{"id": "s1"}]}],
+        "methodology_state": {"subtask_progress": {"total": 5, "completed": 2, "in_progress": 3}},
+    }
+    p = SagTaskPlugin()
+    p._projects_root = tmp_path
+    p._active_task_id = task_id
+    monkeypatch.setattr(sagtask._utils, "_sagtask_instance", p)
+    p.save_task_state(task_id, state)
+
+    result = _handle_sag_task_metrics({"sag_task_id": task_id, "metric": "throughput"})
+    assert result["ok"] is True
+    t = result["throughput"]
+    assert t["subtasks_total"] == 5
+    assert t["subtasks_done"] == 2
+
+
+def test_final_advance_emits_step_metric(tmp_path, monkeypatch):
+    """Advancing the last step of the last phase emits step_advance with to_step='__completed__'."""
+    import sagtask
+    from sagtask.handlers._lifecycle import _handle_sag_task_advance
+
+    task_id = "test-task"
+    task_root = tmp_path / task_id
+    task_root.mkdir()
+
+    state = {
+        "sag_task_id": task_id,
+        "status": "active",
+        "current_phase_id": "p1",
+        "current_step_id": "s1",
+        "phases": [{"id": "p1", "steps": [{"id": "s1", "name": "Only Step"}]}],
+        "methodology_state": {},
+    }
+    p = SagTaskPlugin()
+    p._projects_root = tmp_path
+    p._active_task_id = task_id
+    monkeypatch.setattr(sagtask._utils, "_sagtask_instance", p)
+    p.save_task_state(task_id, state)
+
+    result = _handle_sag_task_advance({"sag_task_id": task_id})
+    assert result["ok"] is True
+    assert result["status"] == "completed"
+
+    metrics_file = task_root / ".sag_metrics.jsonl"
+    assert metrics_file.exists()
+    event = json.loads(metrics_file.read_text().strip())
+    assert event["event"] == "step_advance"
+    assert event["from_step"] == "s1"
+    assert event["to_step"] == "__completed__"
