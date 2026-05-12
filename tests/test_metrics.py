@@ -271,3 +271,42 @@ def test_metrics_handles_malformed_lines(tmp_path, monkeypatch):
     result = _handle_sag_task_metrics({"sag_task_id": task_id, "metric": "verification"})
     assert result["ok"] is True
     assert result["verification"]["total_runs"] == 1
+
+
+def test_context_injection_includes_metrics(tmp_path, monkeypatch):
+    """_build_task_context includes metrics summary line."""
+    import sagtask
+
+    task_id = "test-task"
+    task_root = tmp_path / task_id
+    task_root.mkdir()
+
+    events = [
+        {"ts": "2026-05-12T10:00:00Z", "event": "verify_run", "step_id": "s1", "phase_id": "p1", "command": "pytest", "exit_code": 1, "passed": False},
+        {"ts": "2026-05-12T10:01:00Z", "event": "verify_run", "step_id": "s1", "phase_id": "p1", "command": "pytest --cov", "exit_code": 0, "passed": True, "coverage_pct": 85},
+        {"ts": "2026-05-12T10:02:00Z", "event": "verify_run", "step_id": "s1", "phase_id": "p1", "command": "pytest --cov", "exit_code": 0, "passed": True, "coverage_pct": 88},
+    ]
+    (task_root / ".sag_metrics.jsonl").write_text("\n".join(json.dumps(e) for e in events) + "\n")
+
+    state = {
+        "sag_task_id": task_id,
+        "status": "active",
+        "current_phase_id": "p1",
+        "current_step_id": "s1",
+        "phases": [{"id": "p1", "name": "Phase 1", "steps": [{"id": "s1", "name": "Step 1"}]}],
+        "methodology_state": {"current_methodology": "tdd"},
+        "pending_gates": [],
+        "artifacts_summary": "",
+    }
+
+    p = SagTaskPlugin()
+    p._projects_root = tmp_path
+    p._active_task_id = task_id
+    monkeypatch.setattr(sagtask._utils, "_sagtask_instance", p)
+
+    context = p._build_task_context(state)
+    # Should contain verification stats
+    assert "Verify:" in context
+    assert "2/3" in context
+    # Should contain coverage
+    assert "88%" in context

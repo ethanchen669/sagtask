@@ -318,6 +318,79 @@ class SagTaskPlugin:
 
     # -- Optional hooks --------------------------------------------------------
 
+    def _build_metrics_summary(self, state: Dict[str, Any]) -> str:
+        """Build one-line metrics summary for context injection."""
+        task_id = state.get("sag_task_id", self._active_task_id)
+        if not task_id:
+            return ""
+        task_root = self.get_task_root(task_id)
+        metrics_file = task_root / ".sag_metrics.jsonl"
+        if not metrics_file.exists():
+            return ""
+
+        step_id = state.get("current_step_id", "")
+        events = []
+        for line in metrics_file.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                e = json.loads(line)
+                if e.get("step_id") == step_id:
+                    events.append(e)
+            except json.JSONDecodeError:
+                continue
+
+        if not events:
+            return ""
+
+        parts = []
+
+        # Verification
+        verify_events = [e for e in events if e.get("event") == "verify_run"]
+        if verify_events:
+            total = len(verify_events)
+            passed = sum(1 for e in verify_events if e.get("passed"))
+            pct = round(passed / total * 100)
+            streak = 0
+            last_val = verify_events[-1].get("passed")
+            for e in reversed(verify_events):
+                if e.get("passed") == last_val:
+                    streak += 1
+                else:
+                    break
+            streak_str = f"+{streak}" if last_val else f"-{streak}"
+            parts.append(f"Verify: {passed}/{total} passed ({pct}%), streak {streak_str}")
+
+        # Coverage
+        cov_values = [e["coverage_pct"] for e in events if e.get("event") == "verify_run" and "coverage_pct" in e]
+        if cov_values:
+            current = cov_values[-1]
+            arrow = "→"  # stable (right arrow)
+            if len(cov_values) >= 3:
+                recent_avg = sum(cov_values[-3:]) / 3
+                first_avg = sum(cov_values[:3]) / 3
+                if recent_avg - first_avg > 2:
+                    arrow = "↑"  # up arrow
+                elif recent_avg - first_avg < -2:
+                    arrow = "↓"  # down arrow
+            parts.append(f"Coverage: {current}% ({arrow})")
+
+        # Throughput
+        complete_events = [e for e in events if e.get("event") == "subtask_complete"]
+        if complete_events:
+            latest: Dict[str, str] = {}
+            for e in complete_events:
+                sid = e.get("subtask_id", "")
+                if sid:
+                    latest[sid] = e.get("new_status", "")
+            done = sum(1 for s in latest.values() if s == "done")
+            parts.append(f"Subtasks: {done}/{len(latest)} done")
+
+        if not parts:
+            return ""
+        return "- " + " | ".join(parts)
+
     def _build_task_context(self, state: Dict[str, Any], include_methodology: bool = True) -> str:
         """Build task context string shared by on_turn_start and pre_llm_call."""
         status = state.get("status", "unknown")
@@ -377,6 +450,11 @@ class SagTaskPlugin:
                     lines.append(f"- Verification: {v_status}")
                 else:
                     lines.append("- Verification: pending")
+
+        # Metrics summary line
+        metrics_line = self._build_metrics_summary(state)
+        if metrics_line:
+            lines.append(metrics_line)
 
         cross_context = self._build_cross_pollination_context(state)
         if cross_context:
