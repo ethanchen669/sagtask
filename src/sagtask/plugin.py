@@ -78,7 +78,7 @@ class SagTaskPlugin:
         gitignore = self.get_gitignore_path(task_id)
         if not gitignore.exists():
             task_root.mkdir(parents=True, exist_ok=True)
-            gitignore.write_text(".sag_task_state.json\n.sag_artifacts/\n.sag_executions/\n.sag_worktrees/\n__pycache__/\n*.pyc\n")
+            gitignore.write_text(".sag_task_state.json\n.sag_artifacts/\n.sag_executions/\n.sag_worktrees/\n.sag_metrics.jsonl\n__pycache__/\n*.pyc\n")
         result = subprocess.run(["git", "init"], cwd=str(task_root), capture_output=True, text=True, timeout=_SUBPROCESS_TIMEOUT)
         if result.returncode != 0:
             logger.error("git init failed for %s: %s", task_root, result.stderr)
@@ -301,6 +301,17 @@ class SagTaskPlugin:
         except Exception as e:
             logger.warning("Failed to remove worktree: %s", e)
             return False
+
+    def emit_metric(self, task_id: str, event: str, step_id: str = "", phase_id: str = "", **fields) -> None:
+        """Append one metric event to .sag_metrics.jsonl."""
+        task_root = self.get_task_root(task_id)
+        metrics_file = task_root / ".sag_metrics.jsonl"
+        entry = {"ts": _utcnow_iso(), "event": event, "step_id": step_id, "phase_id": phase_id, **fields}
+        try:
+            with open(metrics_file, "a", encoding="utf-8") as f:
+                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        except Exception as e:
+            logger.debug("Failed to write metric: %s", e)
 
     def shutdown(self) -> None:
         logger.debug("SagTaskPlugin shutting down")
