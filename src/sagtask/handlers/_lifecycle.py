@@ -68,7 +68,7 @@ def _handle_sag_task_create(args: Dict[str, Any]) -> Dict[str, Any]:
     p.save_task_state(task_id, state)
 
     gitignore = p.get_gitignore_path(task_id)
-    gitignore.write_text(".sag_task_state.json\n.sag_artifacts/\n.sag_executions/\n__pycache__/\n*.pyc\n")
+    gitignore.write_text(".sag_task_state.json\n.sag_artifacts/\n.sag_executions/\n.sag_worktrees/\n__pycache__/\n*.pyc\n")
 
     p.ensure_git_repo(task_id)
     p.create_github_repo(task_id)

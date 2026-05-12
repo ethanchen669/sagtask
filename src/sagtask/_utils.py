@@ -17,6 +17,11 @@ _SUBPROCESS_TIMEOUT = 30
 _VERIFY_OUTPUT_MAX_LEN = 2000
 SCHEMA_VERSION = 2
 
+# Debug phase constants
+DEBUG_PHASE_REPRODUCE = "reproduce"
+DEBUG_PHASE_DIAGNOSE = "diagnose"
+DEBUG_PHASE_FIX = "fix"
+
 _sagtask_instance: Optional["SagTaskPlugin"] = None
 
 
