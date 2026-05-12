@@ -1,8 +1,8 @@
 # Metrics Collection Design
 
 **Date:** 2026-05-12
-**Status:** Approved
-**Scope:** P3 item from Phase 4 — execution time tracking, verification stats, coverage trends
+**Status:** Approved (revised after design review)
+**Scope:** P3 item from Phase 4 — verification stats, coverage trends, subtask throughput
 
 ---
 
@@ -20,7 +20,7 @@ Add an append-only event log (`.sag_metrics.jsonl`) that records verification ru
 
 ## 1. Event Log
 
-**File:** `<task_root>/.sag_metrics.jsonl` (git-tracked, append-only)
+**File:** `<task_root>/.sag_metrics.jsonl` (git-ignored, append-only, local runtime state)
 
 **Common fields on every event:**
 
@@ -37,7 +37,7 @@ Add an append-only event log (`.sag_metrics.jsonl`) that records verification ru
 |-------|-----------|-------------------|
 | `verify_run` | `sag_task_verify` | `command`, `exit_code`, `passed`, `coverage_pct` (optional) |
 | `subtask_dispatch` | `sag_task_dispatch` | `subtask_id`, `use_worktree` |
-| `subtask_complete` | `sag_task_plan_update` | `subtask_id`, `status` (done/failed) |
+| `subtask_complete` | `sag_task_plan_update` | `subtask_id`, `old_status`, `new_status` |
 | `step_advance` | `sag_task_advance` | `from_step`, `to_step` |
 | `task_pause` | `sag_task_pause` | `reason` |
 | `task_resume` | `sag_task_resume` | — |
@@ -45,7 +45,8 @@ Add an append-only event log (`.sag_metrics.jsonl`) that records verification ru
 **Example log:**
 ```jsonl
 {"ts":"2026-05-12T10:00:00Z","event":"verify_run","step_id":"s1","phase_id":"p1","command":"pytest tests/","exit_code":1,"passed":false}
-{"ts":"2026-05-12T10:01:30Z","event":"verify_run","step_id":"s1","phase_id":"p1","command":"pytest tests/","exit_code":0,"passed":true,"coverage_pct":85}
+{"ts":"2026-05-12T10:01:30Z","event":"verify_run","step_id":"s1","phase_id":"p1","command":"pytest tests/ --cov=src","exit_code":0,"passed":true,"coverage_pct":85}
+{"ts":"2026-05-12T10:01:45Z","event":"subtask_complete","step_id":"s1","phase_id":"p1","subtask_id":"st-1","old_status":"in_progress","new_status":"done"}
 {"ts":"2026-05-12T10:02:00Z","event":"step_advance","step_id":"s1","phase_id":"p1","from_step":"s1","to_step":"s2"}
 ```
 
@@ -137,26 +138,27 @@ Add an append-only event log (`.sag_metrics.jsonl`) that records verification ru
 
 ## 4. Implementation Details
 
-### 4.1 `_emit_metric` Helper
+### 4.1 `emit_metric` Method
 
-**Location:** `_utils.py`
+**Location:** `SagTaskPlugin` method in `plugin.py`
 
 ```python
-def _emit_metric(task_id: str, event: str, **fields) -> None:
+def emit_metric(self, task_id: str, event: str, step_id: str, phase_id: str, **fields) -> None:
     """Append one metric event to .sag_metrics.jsonl."""
 ```
 
-- Opens file in append mode, writes one JSON line, closes
+- Opens `<task_root>/.sag_metrics.jsonl` in append mode, writes one JSON line, closes
 - Automatically adds `ts` (from `_utcnow_iso()`)
 - `step_id` and `phase_id` are passed explicitly by the caller (from the state dict they already have loaded)
 - Caller passes `event` type and any additional fields as kwargs
-- Silently ignores write failures (metrics are non-critical)
+- Logs write failures at debug level (metrics are non-critical, but silence hides bugs)
 
-### 4.2 Coverage Parsing
+### 4.2 Coverage Parsing (Best-Effort)
 
-- Regex on verify stdout: `r"TOTAL\s+.*?(\d+)%"`
-- Only attempted when the command string contains `"cov"` (heuristic)
+- Regex on combined stdout+stderr: `r"TOTAL\s+.*?(\d+)%"`
+- Only attempted when the command string contains `"cov"` (heuristic to avoid false matches)
 - Returns `None` if not found — field omitted from event
+- This is best-effort extraction; wrapper scripts or XML/JSON reports are not parsed
 
 ### 4.3 Metrics Computation (`_handle_sag_task_metrics`)
 
@@ -165,7 +167,7 @@ def _emit_metric(task_id: str, event: str, **fields) -> None:
 Reads `.sag_metrics.jsonl`, filters by scope (step/phase/task), computes:
 - **Verification:** count pass/fail, compute rate, determine streak
 - **Coverage:** extract `coverage_pct` values, compute trend
-- **Throughput:** count `subtask_complete` events by status
+- **Throughput:** aggregate by latest `new_status` per `subtask_id` (idempotent — handles repeated/reversed transitions)
 
 **Trend algorithm:** Compare mean of last 3 values to mean of preceding 3. If delta > +2: improving. If delta < -2: declining. Otherwise: stable.
 
@@ -184,22 +186,34 @@ Reads `.sag_metrics.jsonl`, filters by scope (step/phase/task), computes:
 
 | File | Change type |
 |------|-------------|
-| `src/sagtask/_utils.py` | Add `_emit_metric()` helper |
+| `src/sagtask/plugin.py` | Add `emit_metric()` method + metrics line in context injection + `.sag_metrics.jsonl` to gitignore template |
 | `src/sagtask/handlers/_plan.py` | Emit `verify_run`, `subtask_complete` |
 | `src/sagtask/handlers/_orchestration.py` | Emit `subtask_dispatch` |
-| `src/sagtask/handlers/_lifecycle.py` | Emit `step_advance`, `task_pause`, `task_resume` |
-| `src/sagtask/plugin.py` | Add metrics line to context injection |
-| `src/sagtask/schemas.py` | Add `TASK_METRICS_SCHEMA` |
+| `src/sagtask/handlers/_lifecycle.py` | Emit `step_advance`, `task_pause`, `task_resume` + `.sag_metrics.jsonl` to gitignore template |
+| `src/sagtask/schemas.py` | Add `TASK_METRICS_SCHEMA` to schemas + `ALL_TOOL_SCHEMAS` |
 | `src/sagtask/handlers/_metrics.py` | New — `_handle_sag_task_metrics` |
+| `src/sagtask/handlers/__init__.py` | Import handler, add to `_tool_handlers` map and `__all__` |
 | `src/sagtask/__init__.py` | Re-export handler + schema |
-| `tests/test_metrics.py` | New — tests for emit, query, context injection |
+| `tests/test_metrics.py` | New — tests for emit, query, context injection, idempotent throughput, malformed JSONL |
 
 ---
 
 ## 5. Non-Goals
 
+- No execution-time tracking (wall-clock durations, pause-adjusted time) — deferred until there's a concrete use case
 - No external metrics backend (Prometheus, StatsD, etc.)
 - No real-time dashboard
 - No alerting or notifications
 - No historical comparison across different tasks
 - No metrics for LLM token usage or cost
+
+## 6. Design Review Resolutions
+
+| Finding | Resolution |
+|---------|-----------|
+| Tool registration incomplete | Added `handlers/__init__.py` to file inventory |
+| Execution-time claimed but not designed | Removed from scope — verification stats are the priority |
+| Throughput not idempotent | `subtask_complete` now carries `old_status`/`new_status`; aggregation uses latest state per subtask_id |
+| Git-tracking creates noise | Changed to git-ignored (local runtime state) |
+| `_emit_metric` ownership | Moved to `SagTaskPlugin.emit_metric()` method |
+| Coverage parsing fragility | Documented as best-effort; parses stdout+stderr combined |
