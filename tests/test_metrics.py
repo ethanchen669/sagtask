@@ -61,3 +61,13 @@ def test_emit_metric_ignores_write_failure(plugin, task_root):
     task_id = "test-task"
     with patch.object(plugin, "get_task_root", return_value=Path("/nonexistent/path")):
         plugin.emit_metric(task_id, "verify_run", step_id="s1", phase_id="p1", passed=True)
+
+
+def test_metrics_tool_registered():
+    """sag_task_metrics is in ALL_TOOL_SCHEMAS and _tool_handlers."""
+    from sagtask.schemas import ALL_TOOL_SCHEMAS
+    from sagtask.handlers import _tool_handlers
+
+    schema_names = [s["name"] for s in ALL_TOOL_SCHEMAS]
+    assert "sag_task_metrics" in schema_names
+    assert "sag_task_metrics" in _tool_handlers
