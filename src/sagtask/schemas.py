@@ -481,6 +481,31 @@ TASK_DEBUG_SCHEMA = {
     },
 }
 
+TASK_METRICS_SCHEMA = {
+    "name": "sag_task_metrics",
+    "description": "Query metrics for the current task. Returns verification stats, coverage trends, and throughput.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "sag_task_id": {
+                "type": "string",
+                "description": "Task ID. Defaults to active task.",
+            },
+            "scope": {
+                "type": "string",
+                "enum": ["step", "phase", "task"],
+                "description": "Scope of metrics query. Defaults to current step.",
+            },
+            "metric": {
+                "type": "string",
+                "enum": ["verification", "coverage", "throughput", "all"],
+                "description": "Which metric category to return. Defaults to all.",
+            },
+        },
+        "required": [],
+    },
+}
+
 ALL_TOOL_SCHEMAS = [
     TASK_CREATE_SCHEMA,
     TASK_STATUS_SCHEMA,
@@ -500,4 +525,5 @@ ALL_TOOL_SCHEMAS = [
     TASK_REVIEW_SCHEMA,
     TASK_BRAINSTORM_SCHEMA,
     TASK_DEBUG_SCHEMA,
+    TASK_METRICS_SCHEMA,
 ]

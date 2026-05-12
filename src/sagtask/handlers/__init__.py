@@ -27,6 +27,7 @@ from ._orchestration import (
     _handle_sag_task_dispatch,
     _handle_sag_task_review,
 )
+from ._metrics import _handle_sag_task_metrics
 
 _tool_handlers = {
     "sag_task_create": _handle_sag_task_create,
@@ -47,6 +48,7 @@ _tool_handlers = {
     "sag_task_review": _handle_sag_task_review,
     "sag_task_brainstorm": _handle_sag_task_brainstorm,
     "sag_task_debug": _handle_sag_task_debug,
+    "sag_task_metrics": _handle_sag_task_metrics,
 }
 
 __all__ = [
@@ -69,4 +71,5 @@ __all__ = [
     "_handle_sag_task_review",
     "_handle_sag_task_brainstorm",
     "_handle_sag_task_debug",
+    "_handle_sag_task_metrics",
 ]
