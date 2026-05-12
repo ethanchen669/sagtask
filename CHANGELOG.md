@@ -24,6 +24,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Plan progress injection in LLM context ("3/7 subtasks completed")
 - `.sag_plans/<step_id>.json` storage for Git-tracked plans
 
+### Fixed
+- `.sag_worktrees/` now included in `.gitignore` template (prevents accidental tracking)
+- Worktree creation in `dispatch` moved before state save (failure no longer leaves stale in-progress status)
+- `remove_worktree` no longer uses `--force` by default (protects uncommitted work)
+- Simplified redundant condition in brainstorm explore phase initialization
+- `DEBUG_PHASE_*` constants moved to `_utils.py` (eliminates `_plan → _orchestration` dependency)
+- `selected_option` schema now documents `0` as custom design indicator
+
 ### Changed
 - Refactored monolithic `__init__.py` (1,734 lines) into 10 modules (max 665 lines each)
 

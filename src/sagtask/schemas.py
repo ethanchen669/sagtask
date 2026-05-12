@@ -441,6 +441,7 @@ TASK_BRAINSTORM_SCHEMA = {
             "selected_option": {
                 "type": "integer",
                 "description": "Which design option the user selected (1-indexed). "
+                "Use 0 for a custom design (provide design_title/design_description). "
                 "Omit to generate options; include to record selection.",
             },
             "design_title": {

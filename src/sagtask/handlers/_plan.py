@@ -297,8 +297,8 @@ def _handle_sag_task_brainstorm(args: Dict[str, Any]) -> Dict[str, Any]:
             "message": f"Selected design option {selected_option}. Proceed with implementation.",
         }
 
-    # Building brainstorm context (explore phase)
-    if current_phase == "explore" and not ms.get("brainstorm_phase"):
+    # Initialize brainstorm phase on first call
+    if not ms.get("brainstorm_phase"):
         state = {
             **state,
             "methodology_state": {
@@ -322,12 +322,8 @@ def _handle_sag_task_brainstorm(args: Dict[str, Any]) -> Dict[str, Any]:
 
 def _handle_sag_task_debug(args: Dict[str, Any]) -> Dict[str, Any]:
     """Build debug context or record hypothesis/fix."""
-    from ._orchestration import (
-        DEBUG_PHASE_DIAGNOSE,
-        DEBUG_PHASE_FIX,
-        DEBUG_PHASE_REPRODUCE,
-        _build_debug_context,
-    )
+    from .._utils import DEBUG_PHASE_DIAGNOSE, DEBUG_PHASE_FIX, DEBUG_PHASE_REPRODUCE
+    from ._orchestration import _build_debug_context
 
     p = _get_provider()
     task_id = args.get("sag_task_id") or p._active_task_id
@@ -412,7 +408,8 @@ def _build_debug_response(
     ms: Dict[str, Any], step_obj: Dict[str, Any],
 ) -> Dict[str, Any]:
     """Build and return debug context response."""
-    from ._orchestration import DEBUG_PHASE_REPRODUCE, _build_debug_context
+    from .._utils import DEBUG_PHASE_REPRODUCE
+    from ._orchestration import _build_debug_context
 
     if not ms.get("debug_phase"):
         state = {

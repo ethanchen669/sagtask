@@ -78,7 +78,7 @@ class SagTaskPlugin:
         gitignore = self.get_gitignore_path(task_id)
         if not gitignore.exists():
             task_root.mkdir(parents=True, exist_ok=True)
-            gitignore.write_text(".sag_task_state.json\n.sag_artifacts/\n.sag_executions/\n__pycache__/\n*.pyc\n")
+            gitignore.write_text(".sag_task_state.json\n.sag_artifacts/\n.sag_executions/\n.sag_worktrees/\n__pycache__/\n*.pyc\n")
         result = subprocess.run(["git", "init"], cwd=str(task_root), capture_output=True, text=True, timeout=_SUBPROCESS_TIMEOUT)
         if result.returncode != 0:
             logger.error("git init failed for %s: %s", task_root, result.stderr)
@@ -274,7 +274,7 @@ class SagTaskPlugin:
             logger.warning("Failed to create worktree: %s", e)
             return None
 
-    def remove_worktree(self, task_id: str, subtask_id: str) -> bool:
+    def remove_worktree(self, task_id: str, subtask_id: str, force: bool = False) -> bool:
         """Remove a git worktree after subtask completion."""
         task_root = self.get_task_root(task_id)
         worktree_dir = task_root / ".sag_worktrees" / subtask_id
@@ -282,13 +282,21 @@ class SagTaskPlugin:
             return True
 
         try:
+            cmd = ["git", "worktree", "remove", str(worktree_dir)]
+            if force:
+                cmd.append("--force")
             result = subprocess.run(
-                ["git", "worktree", "remove", str(worktree_dir), "--force"],
+                cmd,
                 cwd=str(task_root),
                 capture_output=True,
                 text=True,
                 timeout=_SUBPROCESS_TIMEOUT,
             )
+            if result.returncode != 0 and not force:
+                logger.warning(
+                    "Worktree has uncommitted changes, use force=True to remove: %s",
+                    result.stderr.strip(),
+                )
             return result.returncode == 0
         except Exception as e:
             logger.warning("Failed to remove worktree: %s", e)

@@ -10,10 +10,7 @@ from .._utils import _get_provider, _load_plan, _utcnow_iso
 
 logger = logging.getLogger(__name__)
 
-# Debug phase constants
-DEBUG_PHASE_REPRODUCE = "reproduce"
-DEBUG_PHASE_DIAGNOSE = "diagnose"
-DEBUG_PHASE_FIX = "fix"
+from .._utils import DEBUG_PHASE_DIAGNOSE, DEBUG_PHASE_FIX, DEBUG_PHASE_REPRODUCE
 
 # -- Methodology instruction templates -------------------------------------------
 
@@ -178,6 +175,14 @@ def _handle_sag_task_dispatch(args: Dict[str, Any]) -> Dict[str, Any]:
     tmp_path.write_text(json.dumps(plan, indent=2, ensure_ascii=False))
     os.replace(str(tmp_path), str(plan_path))
 
+    # Create worktree if requested (before state save so failure doesn't leave stale status)
+    worktree_path = None
+    use_worktree = args.get("use_worktree", False)
+    if use_worktree:
+        worktree_path = p.create_worktree(task_id, subtask_id)
+        if not worktree_path:
+            return {"ok": False, "error": f"Failed to create worktree for subtask '{subtask_id}'."}
+
     total = len(plan["subtasks"])
     completed = sum(1 for s in plan["subtasks"] if s["status"] == "done")
     in_progress = sum(1 for s in plan["subtasks"] if s["status"] == "in_progress")
@@ -189,14 +194,6 @@ def _handle_sag_task_dispatch(args: Dict[str, Any]) -> Dict[str, Any]:
         },
     }
     p.save_task_state(task_id, state)
-
-    # Create worktree if requested
-    worktree_path = None
-    use_worktree = args.get("use_worktree", False)
-    if use_worktree:
-        worktree_path = p.create_worktree(task_id, subtask_id)
-        if not worktree_path:
-            return {"ok": False, "error": f"Failed to create worktree for subtask '{subtask_id}'."}
 
     step_obj = p._get_current_step_object(state)
     methodology = ms.get("current_methodology", plan.get("methodology", "none"))
