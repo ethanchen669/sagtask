@@ -195,6 +195,14 @@ def _handle_sag_task_dispatch(args: Dict[str, Any]) -> Dict[str, Any]:
     }
     p.save_task_state(task_id, state)
 
+    p.emit_metric(
+        task_id, "subtask_dispatch",
+        step_id=state.get("current_step_id", ""),
+        phase_id=state.get("current_phase_id", ""),
+        subtask_id=subtask_id,
+        use_worktree=use_worktree,
+    )
+
     step_obj = p._get_current_step_object(state)
     methodology = ms.get("current_methodology", plan.get("methodology", "none"))
     max_context_len = args.get("max_context_len", 0)

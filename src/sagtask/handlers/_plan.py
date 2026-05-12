@@ -154,6 +154,24 @@ def _handle_sag_task_verify(args: Dict[str, Any]) -> Dict[str, Any]:
             })
             all_passed = False
 
+    # Emit metrics for each verification command
+    import re
+    for r in results:
+        coverage_pct = None
+        if "cov" in r["command"]:
+            combined = r["stdout"] + r["stderr"]
+            m = re.search(r"TOTAL\s+.*?(\d+)%", combined)
+            if m:
+                coverage_pct = int(m.group(1))
+        emit_fields = {
+            "command": r["command"],
+            "exit_code": r["exit_code"],
+            "passed": r["exit_code"] == 0,
+        }
+        if coverage_pct is not None:
+            emit_fields["coverage_pct"] = coverage_pct
+        p.emit_metric(task_id, "verify_run", step_id=state.get("current_step_id", ""), phase_id=state.get("current_phase_id", ""), **emit_fields)
+
     # TDD state machine: auto-transition phase based on verification result
     tdd_phase_update: Dict[str, Any] = {}
     step_obj_for_tdd = p._get_current_step_object(state)
@@ -474,6 +492,8 @@ def _handle_sag_task_plan_update(args: Dict[str, Any]) -> Dict[str, Any]:
     if not subtask:
         return {"ok": False, "error": f"Subtask '{subtask_id}' not found in plan."}
 
+    old_status = subtask["status"]
+
     def _update_subtask(s: Dict[str, Any]) -> Dict[str, Any]:
         if s["id"] != subtask_id:
             return s
@@ -490,6 +510,17 @@ def _handle_sag_task_plan_update(args: Dict[str, Any]) -> Dict[str, Any]:
     tmp_path = plan_path.with_suffix(".tmp")
     tmp_path.write_text(json.dumps(plan, indent=2, ensure_ascii=False))
     os.replace(str(tmp_path), str(plan_path))
+
+    # Emit subtask_complete metric on terminal status transitions
+    if new_status in ("done", "failed") and old_status != new_status:
+        p.emit_metric(
+            task_id, "subtask_complete",
+            step_id=state.get("current_step_id", ""),
+            phase_id=state.get("current_phase_id", ""),
+            subtask_id=subtask_id,
+            old_status=old_status,
+            new_status=new_status,
+        )
 
     # Sync progress counts
     subtasks = plan["subtasks"]
