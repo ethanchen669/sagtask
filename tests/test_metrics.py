@@ -310,3 +310,39 @@ def test_context_injection_includes_metrics(tmp_path, monkeypatch):
     assert "2/3" in context
     # Should contain coverage
     assert "88%" in context
+
+
+def test_full_metrics_lifecycle(tmp_path, monkeypatch):
+    """End-to-end: create task, verify, query metrics."""
+    import sagtask
+    from sagtask.handlers._plan import _handle_sag_task_verify
+    from sagtask.handlers._metrics import _handle_sag_task_metrics
+
+    task_id = "test-task"
+    task_root = tmp_path / task_id
+    task_root.mkdir()
+
+    state = {
+        "sag_task_id": task_id,
+        "status": "active",
+        "current_phase_id": "p1",
+        "current_step_id": "s1",
+        "phases": [{"id": "p1", "steps": [{"id": "s1", "verification": {"commands": ["echo pass", "echo fail && exit 1"]}}]}],
+        "methodology_state": {},
+    }
+
+    p = SagTaskPlugin()
+    p._projects_root = tmp_path
+    p._active_task_id = task_id
+    monkeypatch.setattr(sagtask._utils, "_sagtask_instance", p)
+    p.save_task_state(task_id, state)
+
+    # Run verify (will produce 2 verify_run events)
+    _handle_sag_task_verify({"sag_task_id": task_id})
+
+    # Query metrics
+    result = _handle_sag_task_metrics({"sag_task_id": task_id, "metric": "verification"})
+    assert result["ok"] is True
+    assert result["verification"]["total_runs"] == 2
+    assert result["verification"]["passed"] == 1
+    assert result["verification"]["failed"] == 1

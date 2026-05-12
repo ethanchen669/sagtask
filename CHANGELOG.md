@@ -23,6 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - TDD state machine — auto red/green phase transitions on verify
 - Plan progress injection in LLM context ("3/7 subtasks completed")
 - `.sag_plans/<step_id>.json` storage for Git-tracked plans
+- `sag_task_metrics` tool — query verification stats, coverage trends, and subtask throughput
+- Append-only metrics event log (`.sag_metrics.jsonl`) emitted by verify, dispatch, plan_update, advance, pause, resume
+- Metrics summary in context injection (pass rate, coverage trend, subtask progress)
 
 ### Fixed
 - `.sag_worktrees/` now included in `.gitignore` template (prevents accidental tracking)
