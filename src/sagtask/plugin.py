@@ -306,12 +306,23 @@ class SagTaskPlugin:
         """Append one metric event to .sag_metrics.jsonl."""
         task_root = self.get_task_root(task_id)
         metrics_file = task_root / ".sag_metrics.jsonl"
+        self._ensure_metrics_gitignored(task_root)
         entry = {"ts": _utcnow_iso(), "event": event, "step_id": step_id, "phase_id": phase_id, **fields}
         try:
             with open(metrics_file, "a", encoding="utf-8") as f:
                 f.write(json.dumps(entry, ensure_ascii=False) + "\n")
         except Exception as e:
             logger.debug("Failed to write metric: %s", e)
+
+    def _ensure_metrics_gitignored(self, task_root: Path) -> None:
+        """Ensure .sag_metrics.jsonl is in .gitignore for existing task repos."""
+        gitignore = task_root / ".gitignore"
+        if not gitignore.exists():
+            return
+        content = gitignore.read_text(encoding="utf-8")
+        if ".sag_metrics.jsonl" not in content:
+            with open(gitignore, "a", encoding="utf-8") as f:
+                f.write(".sag_metrics.jsonl\n")
 
     def shutdown(self) -> None:
         logger.debug("SagTaskPlugin shutting down")
@@ -365,15 +376,10 @@ class SagTaskPlugin:
         # Coverage
         cov_values = [e["coverage_pct"] for e in events if e.get("event") == "verify_run" and "coverage_pct" in e]
         if cov_values:
+            from .handlers._metrics import compute_coverage_trend
             current = cov_values[-1]
-            arrow = "→"  # stable (right arrow)
-            if len(cov_values) >= 3:
-                recent_avg = sum(cov_values[-3:]) / 3
-                first_avg = sum(cov_values[:3]) / 3
-                if recent_avg - first_avg > 2:
-                    arrow = "↑"  # up arrow
-                elif recent_avg - first_avg < -2:
-                    arrow = "↓"  # down arrow
+            trend = compute_coverage_trend(cov_values)
+            arrow = {"improving": "↑", "declining": "↓", "stable": "→"}[trend]
             parts.append(f"Coverage: {current}% ({arrow})")
 
         # Throughput
@@ -385,7 +391,9 @@ class SagTaskPlugin:
                 if sid:
                     latest[sid] = e.get("new_status", "")
             done = sum(1 for s in latest.values() if s == "done")
-            parts.append(f"Subtasks: {done}/{len(latest)} done")
+            plan_total = state.get("methodology_state", {}).get("subtask_progress", {}).get("total", 0)
+            total = plan_total if plan_total > 0 else len(latest)
+            parts.append(f"Subtasks: {done}/{total} done")
 
         if not parts:
             return ""

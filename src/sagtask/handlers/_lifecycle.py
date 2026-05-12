@@ -313,6 +313,13 @@ def _handle_sag_task_advance(args: Dict[str, Any]) -> Dict[str, Any]:
             "updated_at": _utcnow_iso(),
         }
         p.save_task_state(task_id, state)
+        p.emit_metric(
+            task_id, "step_advance",
+            step_id=current_step_id,
+            phase_id=current_phase_id,
+            from_step=current_step_id,
+            to_step="__completed__",
+        )
         return {
             "ok": True,
             "sag_task_id": task_id,
