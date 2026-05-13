@@ -244,6 +244,7 @@ def _on_pre_llm_call(session_id, user_message, ...) -> Dict[str, Any]:
 ```
 
 **What changes:**
+- `src/sagtask/__init__.py`: Change `toolset="memory"` to `toolset="sagtask"` in tool registration. SagTask is a plugin, not a memory provider.
 - `src/sagtask/hooks.py`: Pass `user_message` and `session_id` to context builder.
 - `src/sagtask/plugin.py`: Replace `_build_task_context()` with `_build_layered_context()`. Add `_compute_context_hash()`, layer builder methods, `_InjectionCache`, `_user_wants_related()`. Remove dead code: `prefetch()`, `on_turn_start()`, `sync_turn()`, `_prefetch_result`, `_prefetch_lock`.
 - `src/sagtask/handlers/_plan.py`: Add `failed` to `subtask_progress` dict in `_handle_sag_task_plan_update`.
@@ -256,6 +257,9 @@ def _on_pre_llm_call(session_id, user_message, ...) -> Dict[str, Any]:
 **Dead code removal:**
 - `prefetch()`, `on_turn_start()`, `sync_turn()` — these are memory-provider interface methods. SagTask is a plugin, not a memory provider. They are never called by Hermes.
 - `_prefetch_result`, `_prefetch_lock` — only used by the above dead methods.
+
+**Semantic fix:**
+- `toolset="memory"` → `toolset="sagtask"` in `__init__.py` tool registration. This corrects the architectural misrepresentation that caused confusion about SagTask's role (plugin vs memory provider).
 
 ### Files Modified
 
