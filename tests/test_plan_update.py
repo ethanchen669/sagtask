@@ -123,6 +123,20 @@ class TestPlanUpdate:
         assert "3 test cases" in updated_st["result"]
         assert updated_st["context"] == original_context  # original context preserved
 
+    def test_mark_subtask_failed_syncs_count(self, isolated_sagtask, mock_git):
+        """Should track failed count in subtask_progress."""
+        self._create_task_and_generate_plan(isolated_sagtask, mock_git)
+        plan = self._get_plan(isolated_sagtask)
+        first_id = plan["subtasks"][0]["id"]
+        result = sagtask._handle_sag_task_plan_update({
+            "sag_task_id": "test-planupd",
+            "subtask_id": first_id,
+            "status": "failed",
+        })
+        assert result["ok"] is True
+        state = isolated_sagtask.load_task_state("test-planupd")
+        assert state["methodology_state"]["subtask_progress"]["failed"] == 1
+
     def test_context_appends_on_multiple_updates(self, isolated_sagtask, mock_git):
         """Multiple context updates should append, not overwrite."""
         self._create_task_and_generate_plan(isolated_sagtask, mock_git)

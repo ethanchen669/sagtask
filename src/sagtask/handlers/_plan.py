@@ -527,6 +527,7 @@ def _handle_sag_task_plan_update(args: Dict[str, Any]) -> Dict[str, Any]:
     total = len(subtasks)
     completed = sum(1 for s in subtasks if s["status"] == "done")
     in_progress = sum(1 for s in subtasks if s["status"] == "in_progress")
+    failed = sum(1 for s in subtasks if s["status"] == "failed")
 
     state = {
         **state,
@@ -536,6 +537,7 @@ def _handle_sag_task_plan_update(args: Dict[str, Any]) -> Dict[str, Any]:
                 "total": total,
                 "completed": completed,
                 "in_progress": in_progress,
+                "failed": failed,
             },
         },
     }
