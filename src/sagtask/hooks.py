@@ -45,8 +45,8 @@ def _on_pre_llm_call(
     if not state:
         return {}
 
-    context_text = p._build_task_context(state, include_methodology=True)
-    return {"context": context_text}
+    context_text = p._build_layered_context(state, user_message=user_message, session_id=session_id)
+    return {"context": context_text} if context_text else {}
 
 
 def _on_session_start(

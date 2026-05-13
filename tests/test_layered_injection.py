@@ -159,3 +159,49 @@ class TestLayeredContext:
         lines = [l for l in result.strip().split("\n") if l.strip()]
         assert len(lines) == 1
         assert lines[0].startswith("[SagTask]")
+
+
+class TestPreLlmCallHook:
+    def test_hook_returns_layered_context(self, isolated_sagtask, mock_git):
+        sagtask._handle_sag_task_create({
+            "sag_task_id": "hook-test",
+            "name": "Hook Test",
+            "phases": [{"id": "p1", "name": "P1", "steps": [{"id": "s1", "name": "S1"}]}],
+        })
+        isolated_sagtask._active_task_id = "hook-test"
+
+        result = sagtask._on_pre_llm_call(
+            session_id="sess1", user_message="do something",
+            conversation_history=[], is_first_turn=True,
+            model="test", platform="test", sender_id="test",
+        )
+        assert "context" in result
+        assert "[SagTask]" in result["context"]
+        assert "task=hook-test" in result["context"]
+
+    def test_hook_no_active_task_returns_empty(self, isolated_sagtask):
+        isolated_sagtask._active_task_id = None
+        result = sagtask._on_pre_llm_call(
+            session_id="sess1", user_message="hello",
+            conversation_history=[], is_first_turn=False,
+            model="test", platform="test", sender_id="test",
+        )
+        assert result == {}
+
+    def test_hook_passes_user_message_for_intent(self, isolated_sagtask, mock_git):
+        sagtask._handle_sag_task_create({
+            "sag_task_id": "intent-test",
+            "name": "Intent Test",
+            "phases": [{"id": "p1", "name": "P1", "steps": [{"id": "s1", "name": "S1"}]}],
+        })
+        isolated_sagtask._active_task_id = "intent-test"
+        state = isolated_sagtask.load_task_state("intent-test")
+        state["relationships"] = [{"sag_task_id": "other-task", "relationship": "cross-pollination"}]
+        isolated_sagtask.save_task_state("intent-test", state)
+
+        result = sagtask._on_pre_llm_call(
+            session_id="sess1", user_message="参考一下相关任务",
+            conversation_history=[], is_first_turn=False,
+            model="test", platform="test", sender_id="test",
+        )
+        assert "[Related]" in result["context"]
