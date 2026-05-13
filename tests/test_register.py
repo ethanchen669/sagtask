@@ -29,6 +29,15 @@ class TestRegister:
         assert ctx.register_hook.call_count == 2
         sagtask._utils._sagtask_instance = None
 
+    def test_register_uses_sagtask_toolset(self):
+        sagtask._utils._sagtask_instance = None
+        ctx = MagicMock()
+        sagtask.register(ctx)
+        for call in ctx.register_tool.call_args_list:
+            assert call.kwargs.get("toolset") == "sagtask" or call[1].get("toolset") == "sagtask", \
+                f"Tool registered with wrong toolset: {call}"
+        sagtask._utils._sagtask_instance = None
+
 
 class TestOnSessionStart:
     def test_session_start_initializes_projects_root(self):

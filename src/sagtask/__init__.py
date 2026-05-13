@@ -116,7 +116,7 @@ def register(ctx) -> None:
             continue
         ctx.register_tool(
             name=tool_name,
-            toolset="memory",
+            toolset="sagtask",
             schema=schema,
             handler=handler,
             description=schema.get("description", ""),
