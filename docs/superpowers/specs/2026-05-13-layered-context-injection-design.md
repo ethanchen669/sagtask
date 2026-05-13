@@ -245,14 +245,17 @@ def _on_pre_llm_call(session_id, user_message, ...) -> Dict[str, Any]:
 
 **What changes:**
 - `src/sagtask/hooks.py`: Pass `user_message` and `session_id` to context builder.
-- `src/sagtask/plugin.py`: Replace `_build_task_context()` with `_build_layered_context()`. Add `_compute_context_hash()`, layer builder methods, `_InjectionCache`, `_user_wants_related()`. Keep `_prefetch_result`/`_prefetch_lock`/`on_turn_start`/`prefetch()` unchanged (still used by memory manager path if active).
+- `src/sagtask/plugin.py`: Replace `_build_task_context()` with `_build_layered_context()`. Add `_compute_context_hash()`, layer builder methods, `_InjectionCache`, `_user_wants_related()`. Remove dead code: `prefetch()`, `on_turn_start()`, `sync_turn()`, `_prefetch_result`, `_prefetch_lock`.
 - `src/sagtask/handlers/_plan.py`: Add `failed` to `subtask_progress` dict in `_handle_sag_task_plan_update`.
 
 **What stays:**
 - `_build_metrics_summary()` → still used by L3, unchanged internally
 - `_build_cross_pollination_context()` → adapted for L4b (compact format)
 - `emit_metric()` and all handlers → unchanged
-- `prefetch()` / `on_turn_start()` → remain for backward compatibility with memory manager path; `prefetch()` continues to return the old-style full context for that path.
+
+**Dead code removal:**
+- `prefetch()`, `on_turn_start()`, `sync_turn()` — these are memory-provider interface methods. SagTask is a plugin, not a memory provider. They are never called by Hermes.
+- `_prefetch_result`, `_prefetch_lock` — only used by the above dead methods.
 
 ### Files Modified
 
@@ -292,11 +295,10 @@ def _on_pre_llm_call(session_id, user_message, ...) -> Dict[str, Any]:
 - Task switch must reset all cached state. Keying by task_id makes this automatic.
 - `session_id` is currently empty but is already available in `_on_pre_llm_call` args. Including it costs nothing and prevents future cross-session bleed.
 
-**Why keep `prefetch()` and `on_turn_start()`:**
-- Memory manager may still call `prefetch()` via its own path.
-- Removing it risks breaking the memory manager integration.
-- The new layered logic lives in `_build_layered_context()`, called from `_on_pre_llm_call`.
-- Old `_build_task_context()` remains for backward compatibility with `prefetch()` path.
+**Why remove `prefetch()`, `on_turn_start()`, `sync_turn()`:**
+- SagTask is a Hermes plugin, not a memory provider. These are MemoryProvider interface methods that Hermes never calls on plugins.
+- The only active injection path is `_on_pre_llm_call` registered via `ctx.register_hook()`.
+- Keeping dead code creates confusion about which path is actually active.
 
 **Why not skip turns entirely:**
 - Injected context is ephemeral. Skipping a turn = LLM has zero task awareness that turn.
