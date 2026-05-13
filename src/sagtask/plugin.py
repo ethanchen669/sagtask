@@ -6,6 +6,7 @@ import logging
 import os
 import re
 import subprocess
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
@@ -22,6 +23,15 @@ from ._utils import (
 logger = logging.getLogger(__name__)
 
 
+@dataclass
+class _InjectionCache:
+    context_hash: str = ""
+    artifacts_summary: str = ""
+    step_id: str = ""
+    metrics_summary_hash: str = ""
+    methodology: str = ""
+
+
 class SagTaskPlugin:
     """Long-running task management with per-task Git repos and approval gates."""
 
@@ -33,6 +43,7 @@ class SagTaskPlugin:
         self._projects_root: Optional[Path] = None
         self._active_task_id: Optional[str] = None
         self._active_execution_id: Optional[str] = None
+        self._injection_cache: Dict[tuple, _InjectionCache] = {}
 
     @property
     def name(self) -> str:
@@ -458,6 +469,174 @@ class SagTaskPlugin:
             lines.append(cross_context)
 
         return "\n".join(lines)
+
+    # -- Layered context injection -----------------------------------------
+
+    def _get_injection_cache(self, session_id: str, task_id: str) -> _InjectionCache:
+        key = (session_id, task_id)
+        if key not in self._injection_cache:
+            self._injection_cache[key] = _InjectionCache()
+        return self._injection_cache[key]
+
+    def _compute_context_hash(self, state: Dict[str, Any]) -> str:
+        import hashlib
+        ms = state.get("methodology_state", {})
+        payload = {
+            "status": state.get("status", ""),
+            "phase_id": state.get("current_phase_id", ""),
+            "step_id": state.get("current_step_id", ""),
+            "pending_gates": state.get("pending_gates", []),
+            "artifacts_summary": state.get("artifacts_summary", ""),
+            "methodology": ms.get("current_methodology", ""),
+            "tdd_phase": ms.get("tdd_phase") or "",
+            "debug_phase": ms.get("debug_phase") or "",
+            "brainstorm_phase": ms.get("brainstorm_phase") or "",
+            "subtask_progress": ms.get("subtask_progress", {}),
+            "last_verification": ms.get("last_verification") or {},
+            "relationship_count": len(state.get("relationships", [])),
+        }
+        canonical = json.dumps(payload, sort_keys=True, ensure_ascii=False)
+        return hashlib.md5(canonical.encode()).hexdigest()[:8]
+
+    _RELATED_INTENT_KEYWORDS = {"related", "reuse", "reference", "参考", "借鉴", "相关"}
+
+    def _user_wants_related(self, query: str) -> bool:
+        q_lower = query.lower()
+        return any(kw in q_lower for kw in self._RELATED_INTENT_KEYWORDS)
+
+    def _build_layered_context(
+        self, state: Dict[str, Any], *, user_message: str = "", session_id: str = ""
+    ) -> str:
+        if not self._active_task_id:
+            return ""
+
+        task_id = self._active_task_id
+        cache = self._get_injection_cache(session_id, task_id)
+        current_hash = self._compute_context_hash(state)
+        ms = state.get("methodology_state", {})
+        step_id = state.get("current_step_id", "")
+        methodology = ms.get("current_methodology", "none")
+
+        # Change detection
+        first_turn = cache.context_hash == ""
+        context_hash_changed = current_hash != cache.context_hash
+        step_just_switched = step_id != cache.step_id and cache.step_id != ""
+        artifacts_summary_changed = state.get("artifacts_summary", "") != cache.artifacts_summary and cache.artifacts_summary != ""
+        methodology_just_entered = methodology != cache.methodology and methodology in ("brainstorm", "debug") and cache.methodology != ""
+
+        # Metrics change detection
+        metrics_summary = self._build_metrics_summary(state)
+        import hashlib
+        metrics_hash = hashlib.md5(metrics_summary.encode()).hexdigest()[:8] if metrics_summary else ""
+        metrics_changed = metrics_hash != cache.metrics_summary_hash and cache.metrics_summary_hash != ""
+
+        # Update cache
+        cache.context_hash = current_hash
+        cache.step_id = step_id
+        cache.artifacts_summary = state.get("artifacts_summary", "")
+        cache.metrics_summary_hash = metrics_hash
+        cache.methodology = methodology
+
+        # Build layers
+        lines = []
+
+        # L0: Anchor (always)
+        lines.append(
+            f"[SagTask] task={task_id} status={state.get('status', 'unknown')} "
+            f"phase={state.get('current_phase_id', '')} step={step_id}"
+        )
+
+        # L1: Navigation (on change or blocking)
+        pending_gates = state.get("pending_gates", [])
+        if context_hash_changed or first_turn:
+            phase_name = self._get_current_phase(state)
+            step_name = self._get_current_step(state)
+            lines.append(f"- Phase: {phase_name} | Step: {step_name}")
+        if pending_gates:
+            for gate in pending_gates:
+                lines.append(f"- Gate: awaiting approval {gate}")
+
+        # L1.5: Artifacts (on change)
+        if artifacts_summary_changed and state.get("artifacts_summary"):
+            lines.append(f"- Artifacts: {state['artifacts_summary']}")
+
+        # L2: Execution
+        progress = ms.get("subtask_progress", {})
+        plan_total = progress.get("total", 0)
+        if methodology != "none" or plan_total > 0:
+            completed = progress.get("completed", 0)
+            in_prog = progress.get("in_progress", 0)
+            failed = progress.get("failed", 0)
+
+            if in_prog > 0 or failed > 0:
+                # L2 Expanded
+                phase_label = ""
+                if methodology == "tdd" and ms.get("tdd_phase"):
+                    phase_label = f" | TDD phase: {ms['tdd_phase'].upper()}"
+                elif methodology == "debug" and ms.get("debug_phase"):
+                    phase_label = f" | Debug phase: {ms['debug_phase']}"
+                elif methodology == "brainstorm" and ms.get("brainstorm_phase"):
+                    phase_label = f" | Brainstorm: {ms['brainstorm_phase']}"
+                lines.append(f"- Methodology: {methodology}{phase_label}")
+                parts = [f"{completed}/{plan_total} done"]
+                if in_prog > 0:
+                    parts.append(f"{in_prog} active")
+                if failed > 0:
+                    parts.append(f"{failed} failed")
+                lines.append(f"- Plan: {', '.join(parts)}")
+            else:
+                # L2 Compact
+                phase_str = ""
+                if methodology == "tdd" and ms.get("tdd_phase"):
+                    phase_str = f"TDD: {ms['tdd_phase'].upper()}"
+                elif methodology == "debug" and ms.get("debug_phase"):
+                    phase_str = f"Debug: {ms['debug_phase']}"
+                elif methodology == "brainstorm" and ms.get("brainstorm_phase"):
+                    phase_str = f"Brainstorm: {ms['brainstorm_phase']}"
+                elif methodology != "none":
+                    phase_str = f"Methodology: {methodology}"
+                plan_str = f"Plan: {completed}/{plan_total} done" if plan_total > 0 else ""
+                compact_parts = [p for p in [phase_str, plan_str] if p]
+                if compact_parts:
+                    lines.append(f"- {' | '.join(compact_parts)}")
+
+        # L3: Quality
+        step_obj = self._get_current_step_object(state)
+        if step_obj and step_obj.get("verification"):
+            verification = step_obj["verification"]
+            must_pass = verification.get("must_pass", False)
+            last_v = ms.get("last_verification")
+
+            if must_pass and (not last_v or not last_v.get("passed", False)):
+                if not last_v:
+                    lines.append("- Verify: pending, must pass before advance")
+                else:
+                    if metrics_summary:
+                        lines.append(metrics_summary)
+                    else:
+                        lines.append("- Verify: failed, must pass before advance")
+            elif metrics_changed and metrics_summary:
+                lines.append(metrics_summary)
+
+        # L4a: Related Hint
+        relationships = state.get("relationships", [])
+        cross_tasks = [r for r in relationships if r.get("relationship") == "cross-pollination"]
+        if cross_tasks:
+            lines.append(f"- Related: {len(cross_tasks)} task(s) available")
+
+        # L4b: Related Details
+        if cross_tasks and (step_just_switched or self._user_wants_related(user_message) or methodology_just_entered):
+            lines.append("[Related]")
+            for rel in cross_tasks[:2]:
+                related_id = rel.get("sag_task_id")
+                summaries = self._generate_artifact_summaries(related_id)
+                if summaries:
+                    for s in summaries[:2]:
+                        lines.append(f"- {related_id}: {s.get('path', '')} - {s.get('summary', '')}")
+
+        return "\n".join(lines)
+
+    # -- Plan generation ---------------------------------------------------
 
     def _generate_plan(
         self, step: Dict[str, Any], granularity: str = "medium"
