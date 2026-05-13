@@ -1,7 +1,7 @@
 # Layered Context Injection Design
 
 **Date:** 2026-05-13  
-**Status:** Approved  
+**Status:** Approved (revised after design review)  
 **Goal:** Replace the current flat, always-full task context injection with a layered, state-aware system that injects only contextually relevant information each turn.
 
 ## Problem
@@ -30,7 +30,7 @@
 | L2 - Execution | methodology, tdd/debug/brainstorm phase, plan progress, active dispatches | methodology != "none" or plan_progress.total > 0 |
 | L3 - Quality | verification status, compact metrics | Step has verification config; failed/pending states unconditionally |
 | L4a - Related Hint | "N task(s) available" | Relationships exist |
-| L4b - Related Details | cross-pollination artifact summaries | Step just switched; user intent keywords; brainstorm/debug methodology |
+| L4b - Related Details | cross-pollination artifact summaries | Step just switched; user intent keywords; brainstorm/debug entry only |
 
 ### Decision Rules
 
@@ -58,48 +58,80 @@ if methodology != "none" or plan_total > 0:
 if step_has_verification:
     if must_pass and (not last_verification or not last_verification.passed):
         layers += [L3]  # blocking: every turn
-    elif metrics_changed:
+    elif metrics_summary_hash_changed:
         layers += [L3]
 
 # L4: Cross-pollination
 if has_relationships:
     layers += [L4A]
-if step_just_switched or methodology in ("brainstorm", "debug") or user_intent_related:
+if step_just_switched or user_intent_related:
     layers += [L4B]
+if methodology in ("brainstorm", "debug") and step_just_entered_methodology:
+    layers += [L4B]  # only on entry, not every turn
 ```
 
 ### Context Hash
 
-Compute a hash over the fields that affect injected content. Compare with the cached hash from the previous turn to detect meaningful state changes without modifying any handler.
+Compute a canonical hash over the fields that affect injected content. Compare with the cached hash from the previous turn to detect meaningful state changes without modifying any handler.
 
 ```python
 def _compute_context_hash(self, state: Dict[str, Any]) -> str:
     """Hash of fields that affect context injection content."""
-    import hashlib
+    import hashlib, json
     ms = state.get("methodology_state", {})
-    parts = [
-        state.get("status", ""),
-        state.get("current_phase_id", ""),
-        state.get("current_step_id", ""),
-        str(state.get("pending_gates", [])),
-        state.get("artifacts_summary", ""),
-        ms.get("current_methodology", ""),
-        ms.get("tdd_phase") or "",
-        ms.get("debug_phase") or "",
-        ms.get("brainstorm_phase") or "",
-        str(ms.get("subtask_progress", {})),
-        str(ms.get("last_verification", {})),
-    ]
-    return hashlib.md5("|".join(parts).encode()).hexdigest()[:8]
+    payload = {
+        "status": state.get("status", ""),
+        "phase_id": state.get("current_phase_id", ""),
+        "step_id": state.get("current_step_id", ""),
+        "pending_gates": state.get("pending_gates", []),
+        "artifacts_summary": state.get("artifacts_summary", ""),
+        "methodology": ms.get("current_methodology", ""),
+        "tdd_phase": ms.get("tdd_phase") or "",
+        "debug_phase": ms.get("debug_phase") or "",
+        "brainstorm_phase": ms.get("brainstorm_phase") or "",
+        "subtask_progress": ms.get("subtask_progress", {}),
+        "last_verification": ms.get("last_verification") or {},
+        "relationship_count": len(state.get("relationships", [])),
+    }
+    canonical = json.dumps(payload, sort_keys=True, ensure_ascii=False)
+    return hashlib.md5(canonical.encode()).hexdigest()[:8]
 ```
 
-Instance state:
+### Injection Cache State
+
+Cache is keyed by `(session_id, active_task_id)` to prevent cross-task bleed on task switch. Although `session_id` is currently empty, including it costs nothing and future-proofs the design.
 
 ```python
-self._last_context_hash: str = ""
-self._last_artifacts_summary: str = ""
-self._last_step_id: str = ""
+@dataclass
+class _InjectionCache:
+    context_hash: str = ""
+    artifacts_summary: str = ""
+    step_id: str = ""
+    metrics_summary_hash: str = ""
+    methodology: str = ""  # for detecting methodology entry
+
+# Keyed by (session_id, task_id)
+self._injection_cache: Dict[Tuple[str, str], _InjectionCache] = {}
 ```
+
+**Change detection definitions:**
+
+- `context_hash_changed`: current hash != cached `context_hash`
+- `first_turn_for_task`: cache key `(session_id, task_id)` not in `_injection_cache`
+- `artifacts_summary_changed`: current `state["artifacts_summary"]` != cached `artifacts_summary`
+- `step_just_switched`: current `step_id` != cached `step_id`
+- `metrics_summary_hash_changed`: md5 of `_build_metrics_summary()` output != cached `metrics_summary_hash`
+- `step_just_entered_methodology`: current `methodology` != cached `methodology` (detects entry into brainstorm/debug)
+
+### Failed Subtasks
+
+Extend `methodology_state.subtask_progress` to include a `failed` count. Update `_handle_sag_task_plan_update` to maintain this field when subtask status becomes "failed".
+
+```python
+"subtask_progress": {"total": 5, "completed": 2, "in_progress": 2, "failed": 1}
+```
+
+This is a small additive change to one handler (`_plan.py`) and keeps the execution layer self-contained without needing to read plan files at injection time.
 
 ### Output Formats
 
@@ -199,21 +231,35 @@ def _user_wants_related(self, query: str) -> bool:
 
 ### Integration with Existing Code
 
+**Primary injection path:** `_on_pre_llm_call()` in `src/sagtask/hooks.py`.
+
+This hook already receives `user_message` and `session_id`. The change is to pass them through to the layered context builder:
+
+```python
+def _on_pre_llm_call(session_id, user_message, ...) -> Dict[str, Any]:
+    p = _get_provider()
+    # ... existing init logic ...
+    context_text = p._build_layered_context(state, user_message=user_message, session_id=session_id)
+    return {"context": context_text} if context_text else {}
+```
+
 **What changes:**
-- `_build_task_context()` → rewritten to implement layered logic
-- `prefetch()` → passes `query` to the context builder for intent detection
-- `on_turn_start()` → removed (no longer pre-computes; `prefetch` builds context directly)
-- `_prefetch_result` / `_prefetch_lock` → removed
+- `src/sagtask/hooks.py`: Pass `user_message` and `session_id` to context builder.
+- `src/sagtask/plugin.py`: Replace `_build_task_context()` with `_build_layered_context()`. Add `_compute_context_hash()`, layer builder methods, `_InjectionCache`, `_user_wants_related()`. Keep `_prefetch_result`/`_prefetch_lock`/`on_turn_start`/`prefetch()` unchanged (still used by memory manager path if active).
+- `src/sagtask/handlers/_plan.py`: Add `failed` to `subtask_progress` dict in `_handle_sag_task_plan_update`.
 
 **What stays:**
 - `_build_metrics_summary()` → still used by L3, unchanged internally
-- `_build_cross_pollination_context()` → adapted for L4b (truncated format)
+- `_build_cross_pollination_context()` → adapted for L4b (compact format)
 - `emit_metric()` and all handlers → unchanged
+- `prefetch()` / `on_turn_start()` → remain for backward compatibility with memory manager path; `prefetch()` continues to return the old-style full context for that path.
 
 ### Files Modified
 
-- `src/sagtask/plugin.py`: Rewrite `_build_task_context()`, add `_compute_context_hash()`, `_build_minimal_anchor()`, `_build_l1_navigation()`, `_build_l2_execution()`, `_build_l3_quality()`, `_build_l4_related()`, `_user_wants_related()`. Remove `_prefetch_result`, `_prefetch_lock`, `on_turn_start` pre-computation.
-- `tests/test_injection.py` (new): Layer selection tests.
+- `src/sagtask/hooks.py`: Pass `user_message`, `session_id` to builder.
+- `src/sagtask/plugin.py`: Add `_build_layered_context()`, `_compute_context_hash()`, `_InjectionCache`, layer builder methods, `_user_wants_related()`.
+- `src/sagtask/handlers/_plan.py`: Add `failed` count to `subtask_progress`.
+- `tests/test_injection.py` (new): Layer selection tests via `_on_pre_llm_call`.
 - `tests/test_metrics.py`: Update `test_context_injection_includes_metrics` if format changes.
 
 ## Testing Plan
@@ -226,22 +272,31 @@ def _user_wants_related(self, query: str) -> bool:
 6. Stable execution with no changes → L0 + L2 compact + relevant L3/L4a only.
 7. Context hash change triggers L1 navigation expansion.
 8. Step switch triggers L4b related details.
-9. User intent keywords trigger L4b.
+9. User intent keywords trigger L4b via `_on_pre_llm_call(user_message=...)`.
 10. Artifacts change triggers L1.5.
-11. Plan with active dispatches or failures triggers L2 expanded.
-12. Task switch resets cached hash and triggers full expansion.
+11. Plan with active dispatches or failed subtasks triggers L2 expanded.
+12. Task switch resets cached state and triggers full expansion (even with same step_id).
+13. Stable brainstorm/debug turns do NOT repeatedly inject L4b (only on entry).
+14. Metrics summary change triggers L3 even when other state fields unchanged.
+15. Cache state is isolated per task (switching tasks doesn't carry stale cache).
+16. Relationship changes affect context hash and layer decisions.
 
 ## Design Decisions
 
 **Why context hash over `context_revision` counter:**
-- Non-invasive: no changes to any of the 11 handlers.
+- Non-invasive: no changes to any of the 11 handlers (except adding `failed` to subtask_progress).
 - Impossible to forget bumping — hash is derived from state, not manually maintained.
-- md5 truncated to 8 chars is sufficient for change detection (not security).
+- Canonical JSON + md5 truncated to 8 chars is sufficient for change detection (not security).
 
-**Why no per-session keying:**
-- SagTask operates with one active task per session.
-- `session_id` is always empty in current Hermes integration.
-- Adding session keying now is YAGNI; easy to add later if needed.
+**Why cache is keyed by `(session_id, task_id)`:**
+- Task switch must reset all cached state. Keying by task_id makes this automatic.
+- `session_id` is currently empty but is already available in `_on_pre_llm_call` args. Including it costs nothing and prevents future cross-session bleed.
+
+**Why keep `prefetch()` and `on_turn_start()`:**
+- Memory manager may still call `prefetch()` via its own path.
+- Removing it risks breaking the memory manager integration.
+- The new layered logic lives in `_build_layered_context()`, called from `_on_pre_llm_call`.
+- Old `_build_task_context()` remains for backward compatibility with `prefetch()` path.
 
 **Why not skip turns entirely:**
 - Injected context is ephemeral. Skipping a turn = LLM has zero task awareness that turn.
