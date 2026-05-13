@@ -6,7 +6,6 @@ import logging
 import os
 import re
 import subprocess
-import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
@@ -34,8 +33,6 @@ class SagTaskPlugin:
         self._projects_root: Optional[Path] = None
         self._active_task_id: Optional[str] = None
         self._active_execution_id: Optional[str] = None
-        self._prefetch_result: str = ""
-        self._prefetch_lock = threading.Lock()
 
     @property
     def name(self) -> str:
@@ -222,15 +219,6 @@ class SagTaskPlugin:
         lines.append("")
         lines.append("Use `sag_task_status`, `sag_task_pause`, `sag_task_advance`, or `sag_task_approve` to manage this sag long term task.")
         return "\n".join(lines)
-
-    def prefetch(self, query: str, *, session_id: str = "") -> str:
-        if not self._active_task_id:
-            return ""
-        with self._prefetch_lock:
-            return self._prefetch_result
-
-    def sync_turn(self, user_content: str, assistant_content: str, *, session_id: str = "") -> None:
-        pass
 
     def get_tool_schemas(self) -> List[Dict[str, Any]]:
         # Lazy import to avoid circular dependency (schemas import triggers sagtask init)
@@ -560,15 +548,6 @@ class SagTaskPlugin:
             "granularity": granularity,
             "subtasks": subtasks,
         }
-
-    def on_turn_start(self, turn_number: int, message: str, **kwargs) -> None:
-        if not self._active_task_id:
-            return
-        state = self.load_task_state(self._active_task_id)
-        if not state:
-            return
-        with self._prefetch_lock:
-            self._prefetch_result = self._build_task_context(state, include_methodology=False)
 
     def _build_cross_pollination_context(self, state: Dict[str, Any]) -> str:
         relationships = state.get("relationships", [])
