@@ -9,9 +9,27 @@
 
 The layered context injection direction is correct: keep a minimal SagTask anchor every turn and selectively add detail layers based on current task state. The spec also correctly incorporates the confirmed Hermes behavior that `pre_llm_call` runs once per turn and injected context is ephemeral.
 
-The design still needs tightening before implementation. The largest issue is that user-intent detection for L4b is described through `prefetch()`, but the active SagTask injection path is the `pre_llm_call` hook. The spec also needs task-keyed cache state, precise change detection for metrics/artifacts, and clearer handling for heavy cross-pollination details.
+The design still needs tightening before implementation. The largest implementation risk is that SagTask is documented and designed as a standalone Hermes plugin, but the current tool registration still uses the `memory` toolset. The spec also needs to keep `pre_llm_call` as the only active injection path, use task-keyed cache state, define precise change detection for metrics/artifacts, and avoid repeatedly injecting heavy cross-pollination details.
 
 ## Findings
+
+### High: Tool Registration Still Uses The `memory` Toolset
+
+Current code registers SagTask tools under `toolset="memory"`:
+
+```python
+ctx.register_tool(
+    name=tool_name,
+    toolset="memory",
+    schema=schema,
+    handler=handler,
+    description=schema.get("description", ""),
+)
+```
+
+This conflicts with the project architecture: SagTask is a Hermes standalone user plugin and is not a `MemoryProvider`. The README, `CLAUDE.md`, and the revised design all state that SagTask coexists with memory providers and injects task context via the `pre_llm_call` hook. Keeping the toolset as `memory` makes the implementation semantically misleading and can cause future agents to route fixes through memory-provider concepts such as `prefetch()`, `on_turn_start()`, or `sync_turn()`.
+
+**Required fix:** Change the registration metadata to a SagTask-specific non-memory toolset, preferably `toolset="sagtask"` if Hermes accepts arbitrary toolset names. If Hermes requires predefined toolset values, choose the confirmed non-memory plugin toolset and document that constraint. Add a regression test in `tests/test_register.py` asserting every registered SagTask tool uses the expected non-memory toolset.
 
 ### High: L4b User Intent Is Wired To `prefetch()`, Not `pre_llm_call`
 
@@ -75,6 +93,8 @@ The spec computes the hash with `str(list/dict)` and truncates MD5 to 8 chars. T
 
 ## Recommended Changes
 
+- Change `src/sagtask/__init__.py` tool registration from `toolset="memory"` to a SagTask-specific non-memory toolset, preferably `toolset="sagtask"`.
+- Update registration tests to assert the toolset value so this does not regress during future refactors.
 - Make `pre_llm_call` the primary integration path in the spec.
 - Change `_on_pre_llm_call()` to pass `user_message`, `session_id`, and optionally `sender_id` to the layered builder.
 - Replace singleton cache fields with task-keyed or session/task-keyed state.
@@ -88,18 +108,19 @@ The spec computes the hash with `str(list/dict)` and truncates MD5 to 8 chars. T
 
 Add tests for:
 
-1. `_on_pre_llm_call()` passes user intent and triggers L4b related context.
-2. Task switch triggers L1/L4b expansion even if `step_id` or hash-like fields are identical.
-3. Stable brainstorm/debug turns do not repeatedly inject L4b details.
-4. Metrics changes trigger L3 when state fields do not otherwise change.
-5. Artifact summary changes trigger L1.5 for the correct task only.
-6. Failed subtasks trigger L2 expanded.
-7. Cache state is isolated per task.
-8. Relationship changes affect the context hash or related-layer decision.
+1. `register(ctx)` registers all SagTask tools under the expected non-memory toolset.
+2. `_on_pre_llm_call()` passes user intent and triggers L4b related context.
+3. Task switch triggers L1/L4b expansion even if `step_id` or hash-like fields are identical.
+4. Stable brainstorm/debug turns do not repeatedly inject L4b details.
+5. Metrics changes trigger L3 when state fields do not otherwise change.
+6. Artifact summary changes trigger L1.5 for the correct task only.
+7. Failed subtasks trigger L2 expanded.
+8. Cache state is isolated per task.
+9. Relationship changes affect the context hash or related-layer decision.
 
 ## Notes
 
-No files were modified as part of the design review itself. At review time, the working tree already had an unrelated untracked review document:
+No source files were modified as part of the design review itself. At review time, the working tree already had an unrelated untracked review document:
 
 ```text
 docs/superpowers/specs/2026-05-12-sparse-context-injection-design-review.md

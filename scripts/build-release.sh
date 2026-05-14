@@ -10,10 +10,9 @@ trap "rm -rf $BUILD_DIR" EXIT
 
 echo "→ Building SagTask release ${VERSION}"
 
-# 1. Copy runtime files only
+# 1. Copy entire package tree (excluding __pycache__)
 mkdir -p "${BUILD_DIR}/sagtask"
-cp src/sagtask/__init__.py "${BUILD_DIR}/sagtask/"
-cp src/sagtask/plugin.yaml "${BUILD_DIR}/sagtask/"
+rsync -a --exclude='__pycache__' src/sagtask/ "${BUILD_DIR}/sagtask/"
 echo "${VERSION}" > "${BUILD_DIR}/sagtask/VERSION"
 
 # 2. Update version in plugin.yaml
@@ -24,8 +23,12 @@ rm -f "${BUILD_DIR}/sagtask/plugin.yaml.bak"
 mkdir -p dist
 tar -czf "dist/${ARTIFACT}" -C "${BUILD_DIR}" sagtask/
 
-# 4. Generate checksum
-(cd dist && sha256sum "${ARTIFACT}" > "${ARTIFACT}.sha256")
+# 4. Generate checksum (use shasum on macOS, sha256sum on Linux)
+if command -v sha256sum &>/dev/null; then
+    (cd dist && sha256sum "${ARTIFACT}" > "${ARTIFACT}.sha256")
+elif command -v shasum &>/dev/null; then
+    (cd dist && shasum -a 256 "${ARTIFACT}" > "${ARTIFACT}.sha256")
+fi
 
 echo "✓ Built: dist/${ARTIFACT}"
 echo "  SHA256: $(cat "dist/${ARTIFACT}.sha256" | cut -d' ' -f1)"

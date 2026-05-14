@@ -7,36 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-05-14
+
 ### Added
+- `sag_task_plan` tool — generate structured subtask plans per step
+- `sag_task_plan_update` tool — track subtask completion with progress sync
 - `sag_task_dispatch` tool — build subagent context and dispatch subtasks for execution
 - `sag_task_review` tool — two-stage code review (spec compliance + quality)
 - `sag_task_brainstorm` tool — structured design exploration with option selection
 - `sag_task_debug` tool — systematic debugging workflow (reproduce → diagnose → fix)
+- `sag_task_metrics` tool — query verification stats, coverage trends, and subtask throughput
+- Layered context injection system (L0 anchor, L1 navigation, L1.5 artifacts, L2 execution, L3 quality, L4a/b related tasks)
+- Per-session injection cache with context hashing for minimal token usage
+- TDD state machine — auto red/green phase transitions on verify
 - Brainstorm and debug phase tracking in context injection
 - `_recommend_methodology()` helper for auto-suggesting methodology from step descriptions
 - Git worktree integration for isolated subtask dispatch (`use_worktree` param)
 - `create_worktree`/`remove_worktree` methods on SagTaskPlugin
-- Active dispatch status in context injection
-- Orchestration handlers module (`handlers/_orchestration.py`)
-- `sag_task_plan` tool — generate structured subtask plans per step
-- `sag_task_plan_update` tool — track subtask completion with progress sync
-- TDD state machine — auto red/green phase transitions on verify
-- Plan progress injection in LLM context ("3/7 subtasks completed")
 - `.sag_plans/<step_id>.json` storage for Git-tracked plans
-- `sag_task_metrics` tool — query verification stats, coverage trends, and subtask throughput
 - Append-only metrics event log (`.sag_metrics.jsonl`) emitted by verify, dispatch, plan_update, advance, pause, resume
 - Metrics summary in context injection (pass rate, coverage trend, subtask progress)
+- 253 tests covering all features
 
 ### Fixed
 - `.sag_worktrees/` now included in `.gitignore` template (prevents accidental tracking)
 - Worktree creation in `dispatch` moved before state save (failure no longer leaves stale in-progress status)
 - `remove_worktree` no longer uses `--force` by default (protects uncommitted work)
-- Simplified redundant condition in brainstorm explore phase initialization
 - `DEBUG_PHASE_*` constants moved to `_utils.py` (eliminates `_plan → _orchestration` dependency)
-- `selected_option` schema now documents `0` as custom design indicator
+- Metrics detection for "primed empty → metrics appear" transition
+- L4b related section no longer emits empty headers
 
 ### Changed
 - Refactored monolithic `__init__.py` (1,734 lines) into 10 modules (max 665 lines each)
+- Context injection replaced with layered system (replaces old `_build_task_context`)
+- `toolset` changed from `"memory"` to `"sagtask"` in plugin registration
 
 ## [1.3.0] - 2026-05-08
 
