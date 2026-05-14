@@ -6,6 +6,7 @@ import logging
 import os
 import re
 import subprocess
+import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -44,6 +45,7 @@ class SagTaskPlugin:
         self._active_task_id: Optional[str] = None
         self._active_execution_id: Optional[str] = None
         self._injection_cache: Dict[tuple, _InjectionCache] = {}
+        self._injection_lock = threading.Lock()
 
     @property
     def name(self) -> str:
@@ -421,7 +423,10 @@ class SagTaskPlugin:
             "brainstorm_phase": ms.get("brainstorm_phase") or "",
             "subtask_progress": ms.get("subtask_progress", {}),
             "last_verification": ms.get("last_verification") or {},
-            "relationship_count": len(state.get("relationships", [])),
+            "relationships": sorted(
+                (r.get("relationship", ""), r.get("sag_task_id", ""))
+                for r in state.get("relationships", [])
+            ),
         }
         canonical = json.dumps(payload, sort_keys=True, ensure_ascii=False)
         return hashlib.md5(canonical.encode()).hexdigest()[:8]
@@ -438,6 +443,12 @@ class SagTaskPlugin:
         if not self._active_task_id:
             return ""
 
+        with self._injection_lock:
+            return self._build_layered_context_locked(state, user_message=user_message, session_id=session_id)
+
+    def _build_layered_context_locked(
+        self, state: Dict[str, Any], *, user_message: str = "", session_id: str = ""
+    ) -> str:
         task_id = self._active_task_id
         cache = self._get_injection_cache(session_id, task_id)
         current_hash = self._compute_context_hash(state)
@@ -459,7 +470,10 @@ class SagTaskPlugin:
         metrics_summary = self._build_metrics_summary(state)
         import hashlib
         metrics_hash = hashlib.md5(metrics_summary.encode()).hexdigest()[:8] if metrics_summary else ""
-        metrics_changed = metrics_hash != cache.metrics_summary_hash and cache.metrics_summary_hash != ""
+        metrics_changed = (
+            metrics_hash != cache.metrics_summary_hash
+            and (cache.metrics_summary_hash != "" or first_turn)
+        )
 
         # Update cache
         cache.context_hash = current_hash
@@ -556,7 +570,7 @@ class SagTaskPlugin:
             lines.append(f"- Related: {len(cross_tasks)} task(s) available")
 
         # L4b: Related Details
-        if cross_tasks and (step_just_switched or self._user_wants_related(user_message) or methodology_just_entered):
+        if cross_tasks and (first_turn or step_just_switched or self._user_wants_related(user_message) or methodology_just_entered):
             lines.append("[Related]")
             for rel in cross_tasks[:2]:
                 related_id = rel.get("sag_task_id")
