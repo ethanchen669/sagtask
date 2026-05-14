@@ -431,6 +431,24 @@ class SagTaskPlugin:
         canonical = json.dumps(payload, sort_keys=True, ensure_ascii=False)
         return hashlib.md5(canonical.encode()).hexdigest()[:8]
 
+    @staticmethod
+    def _methodology_detail(ms: Dict[str, Any], methodology: str) -> str:
+        """One-line detail payload for brainstorm/debug methodology."""
+        if methodology == "brainstorm":
+            selected = ms.get("brainstorm_selected")
+            if selected:
+                return f"selected option {selected}"
+            return ms.get("brainstorm_phase") or ""
+        if methodology == "debug":
+            debug_phase = ms.get("debug_phase", "")
+            if debug_phase == "fix":
+                return "fixing"
+            hypothesis = ms.get("debug_hypothesis", "")
+            if debug_phase == "diagnose" and hypothesis:
+                return f"diagnosing: {hypothesis}"
+            return debug_phase
+        return ""
+
     _RELATED_INTENT_KEYWORDS = {"related", "reuse", "reference", "参考", "借鉴", "相关"}
 
     def _user_wants_related(self, query: str) -> bool:
@@ -470,10 +488,7 @@ class SagTaskPlugin:
         metrics_summary = self._build_metrics_summary(state)
         import hashlib
         metrics_hash = hashlib.md5(metrics_summary.encode()).hexdigest()[:8] if metrics_summary else ""
-        metrics_changed = (
-            metrics_hash != cache.metrics_summary_hash
-            and (cache.metrics_summary_hash != "" or first_turn)
-        )
+        metrics_changed = bool(metrics_hash) and metrics_hash != cache.metrics_summary_hash
 
         # Update cache
         cache.context_hash = current_hash
@@ -513,15 +528,17 @@ class SagTaskPlugin:
             in_prog = progress.get("in_progress", 0)
             failed = progress.get("failed", 0)
 
+            meth_detail = self._methodology_detail(ms, methodology)
+
             if in_prog > 0 or failed > 0:
                 # L2 Expanded
                 phase_label = ""
                 if methodology == "tdd" and ms.get("tdd_phase"):
                     phase_label = f" | TDD phase: {ms['tdd_phase'].upper()}"
-                elif methodology == "debug" and ms.get("debug_phase"):
-                    phase_label = f" | Debug phase: {ms['debug_phase']}"
-                elif methodology == "brainstorm" and ms.get("brainstorm_phase"):
-                    phase_label = f" | Brainstorm: {ms['brainstorm_phase']}"
+                elif methodology == "debug":
+                    phase_label = f" | Debug: {meth_detail}" if meth_detail else ""
+                elif methodology == "brainstorm":
+                    phase_label = f" | Brainstorm: {meth_detail}" if meth_detail else ""
                 lines.append(f"- Methodology: {methodology}{phase_label}")
                 parts = [f"{completed}/{plan_total} done"]
                 if in_prog > 0:
@@ -534,10 +551,10 @@ class SagTaskPlugin:
                 phase_str = ""
                 if methodology == "tdd" and ms.get("tdd_phase"):
                     phase_str = f"TDD: {ms['tdd_phase'].upper()}"
-                elif methodology == "debug" and ms.get("debug_phase"):
-                    phase_str = f"Debug: {ms['debug_phase']}"
-                elif methodology == "brainstorm" and ms.get("brainstorm_phase"):
-                    phase_str = f"Brainstorm: {ms['brainstorm_phase']}"
+                elif methodology == "debug" and meth_detail:
+                    phase_str = f"Debug: {meth_detail}"
+                elif methodology == "brainstorm" and meth_detail:
+                    phase_str = f"Brainstorm: {meth_detail}"
                 elif methodology != "none":
                     phase_str = f"Methodology: {methodology}"
                 plan_str = f"Plan: {completed}/{plan_total} done" if plan_total > 0 else ""
@@ -571,13 +588,18 @@ class SagTaskPlugin:
 
         # L4b: Related Details
         if cross_tasks and (first_turn or step_just_switched or self._user_wants_related(user_message) or methodology_just_entered):
-            lines.append("[Related]")
+            related_lines: List[str] = []
             for rel in cross_tasks[:2]:
                 related_id = rel.get("sag_task_id")
                 summaries = self._generate_artifact_summaries(related_id)
                 if summaries:
                     for s in summaries[:2]:
-                        lines.append(f"- {related_id}: {s.get('path', '')} - {s.get('summary', '')}")
+                        related_lines.append(f"- {related_id}: {s.get('path', '')} - {s.get('summary', '')}")
+                else:
+                    related_lines.append(f"- {related_id}")
+            if related_lines:
+                lines.append("[Related]")
+                lines.extend(related_lines)
 
         return "\n".join(lines)
 
