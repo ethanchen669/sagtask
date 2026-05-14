@@ -274,7 +274,7 @@ def test_metrics_handles_malformed_lines(tmp_path, monkeypatch):
 
 
 def test_context_injection_includes_metrics(tmp_path, monkeypatch):
-    """_build_task_context includes metrics summary line."""
+    """_build_layered_context includes metrics summary via L3 layer."""
     import sagtask
 
     task_id = "test-task"
@@ -293,10 +293,11 @@ def test_context_injection_includes_metrics(tmp_path, monkeypatch):
         "status": "active",
         "current_phase_id": "p1",
         "current_step_id": "s1",
-        "phases": [{"id": "p1", "name": "Phase 1", "steps": [{"id": "s1", "name": "Step 1"}]}],
-        "methodology_state": {"current_methodology": "tdd"},
+        "phases": [{"id": "p1", "name": "Phase 1", "steps": [{"id": "s1", "name": "Step 1", "verification": {"commands": ["pytest"], "must_pass": True}}]}],
+        "methodology_state": {"current_methodology": "tdd", "last_verification": {"passed": False}},
         "pending_gates": [],
         "artifacts_summary": "",
+        "relationships": [],
     }
 
     p = SagTaskPlugin()
@@ -304,8 +305,8 @@ def test_context_injection_includes_metrics(tmp_path, monkeypatch):
     p._active_task_id = task_id
     monkeypatch.setattr(sagtask._utils, "_sagtask_instance", p)
 
-    context = p._build_task_context(state)
-    # Should contain verification stats
+    context = p._build_layered_context(state, user_message="", session_id="test")
+    # Should contain verification stats via L3 metrics summary
     assert "Verify:" in context
     assert "2/3" in context
     # Should contain coverage
