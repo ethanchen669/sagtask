@@ -417,3 +417,29 @@ class TestReviewRegressions:
         h1 = isolated_sagtask._compute_context_hash(state1)
         h2 = isolated_sagtask._compute_context_hash(state2)
         assert h1 != h2
+
+    def test_metrics_appear_after_cache_primed_empty(self, isolated_sagtask):
+        """Metrics should show when they appear after cache was primed with no metrics."""
+        import json as _json
+        task_id = "test-metrics-appear"
+        task_root = isolated_sagtask._projects_root / task_id
+        task_root.mkdir()
+
+        state = self._make_state(task_id=task_id)
+        state["phases"][0]["steps"][0]["verification"] = {"commands": ["pytest"], "must_pass": True}
+        state["methodology_state"]["last_verification"] = {"passed": True}
+        isolated_sagtask._active_task_id = task_id
+
+        # First call: no metrics file yet → cache primed with empty metrics_summary_hash
+        r1 = isolated_sagtask._build_layered_context(state, user_message="", session_id="s1")
+        assert "Verify:" not in r1
+
+        # Now metrics appear (as if verify just ran)
+        events = [
+            {"ts": "2026-05-12T10:00:00Z", "event": "verify_run", "step_id": "s1", "phase_id": "p1", "command": "pytest", "exit_code": 0, "passed": True},
+        ]
+        (task_root / ".sag_metrics.jsonl").write_text("\n".join(_json.dumps(e) for e in events) + "\n")
+
+        # Second call: metrics now exist → must show Verify: line
+        r2 = isolated_sagtask._build_layered_context(state, user_message="", session_id="s1")
+        assert "Verify:" in r2

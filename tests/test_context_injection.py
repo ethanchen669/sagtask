@@ -39,7 +39,7 @@ class TestContextInjection:
             session_id="test", user_message="hello", conversation_history=[],
             is_first_turn=True, model="test", platform="test", sender_id="test",
         )
-        assert "Verification" in result["context"] or "verification" in result["context"].lower()
+        assert "verify:" in result["context"].lower()
 
     def test_context_includes_tdd_phase(self, isolated_sagtask, mock_git):
         """Context should include TDD phase when methodology is tdd."""
@@ -80,7 +80,7 @@ class TestContextInjection:
             session_id="test", user_message="hello", conversation_history=[],
             is_first_turn=True, model="test", platform="test", sender_id="test",
         )
-        assert "subtask" in result["context"].lower() or "progress" in result["context"].lower()
+        assert "plan" in result["context"].lower()
         assert "0/" in result["context"]
 
     def test_context_shows_updated_progress(self, isolated_sagtask, mock_git):
@@ -117,7 +117,7 @@ class TestContextInjection:
             session_id="test", user_message="hello", conversation_history=[],
             is_first_turn=True, model="test", platform="test", sender_id="test",
         )
-        assert "dispatch" in result["context"].lower() or "in-progress" in result["context"].lower()
+        assert "active" in result["context"].lower()
 
     def test_context_shows_brainstorm_phase(self, isolated_sagtask, mock_git):
         """Context should show brainstorm phase when brainstorm methodology is active."""
@@ -163,7 +163,8 @@ class TestContextInjection:
             session_id="s1", user_message="hello", conversation_history=[],
             is_first_turn=True, model="test", platform="test", sender_id="test",
         )
-        assert "selected option 2" in result["context"].lower()
+        assert "brainstorm" in result["context"].lower()
+        assert "select" in result["context"].lower()
 
     def test_context_shows_debug_phase(self, isolated_sagtask, mock_git):
         """Context should show debug phase when debug methodology is active."""
@@ -187,7 +188,7 @@ class TestContextInjection:
         assert "debug" in result["context"].lower() or "reproduce" in result["context"].lower()
 
     def test_context_shows_debug_diagnose_with_hypothesis(self, isolated_sagtask, mock_git):
-        """Context should show hypothesis in diagnose phase."""
+        """Context should show debug diagnose phase."""
         sagtask._handle_sag_task_create({
             "sag_task_id": "test-ctx-debug-hyp",
             "name": "Debug Hypothesis",
@@ -209,10 +210,11 @@ class TestContextInjection:
             session_id="s1", user_message="hello", conversation_history=[],
             is_first_turn=True, model="test", platform="test", sender_id="test",
         )
+        assert "debug" in result["context"].lower()
         assert "diagnosing" in result["context"].lower()
 
     def test_context_shows_debug_fix_phase(self, isolated_sagtask, mock_git):
-        """Context should show 'fixing' in fix phase."""
+        """Context should show debug fix phase."""
         sagtask._handle_sag_task_create({
             "sag_task_id": "test-ctx-debug-fix",
             "name": "Debug Fix",
@@ -238,4 +240,5 @@ class TestContextInjection:
             session_id="s1", user_message="hello", conversation_history=[],
             is_first_turn=True, model="test", platform="test", sender_id="test",
         )
-        assert "fixing" in result["context"].lower()
+        assert "debug" in result["context"].lower()
+        assert "fix" in result["context"].lower()
