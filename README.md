@@ -1,41 +1,58 @@
 # SagTask
 
-A Hermes Agent **standalone user plugin** for long-running, multi-phase tasks with human-in-the-loop approval gates and cross-session recovery. Each task gets its own Git repository, enabling full version control, branch-per-step workflows, and decentralized collaboration.
+A Hermes Agent **standalone user plugin** for long-running, multi-phase tasks with structured methodology execution, subagent orchestration, and cross-session recovery. Each task gets its own Git repository with full version control.
 
-> **SagTask is NOT a memory provider.** It does not take the `memory.provider` slot. It coexists with any memory system and injects task context via the `pre_llm_call` hook.
+> **SagTask is NOT a memory provider.** It coexists with any memory system and injects task context via the `pre_llm_call` hook.
 
 ## Quick Install
 
 ```bash
-# One-liner (requires curl)
 curl -fsSL https://raw.githubusercontent.com/ethanchen669/sagtask/main/install.sh | bash
 ```
 
 Or manually:
 
 ```bash
-# 1. Clone (or symlink your development copy)
 git clone https://github.com/ethanchen669/sagtask.git ~/.hermes/plugins/sagtask
-
-# 2. Verify
-ls ~/.hermes/plugins/sagtask/__init__.py   # should exist
-
-# 3. Restart your Hermes gateway to load the plugin
+# Restart your Hermes gateway to load the plugin
 ```
 
-No `pip install`, no extra dependencies, no `config.yaml` changes needed.
+## Tools (19)
 
-## Tools
+### Task Lifecycle
 
 | Tool | Description |
 |------|-------------|
 | `sag_task_create` | Create task with phased steps/gates, init Git + GitHub repo |
 | `sag_task_status` | Show current phase/step/pending gates |
+| `sag_task_advance` | Move to next step/phase (blocks if verification fails) |
 | `sag_task_pause` | Snapshot execution context for later resume |
 | `sag_task_resume` | Restore from most recent paused execution |
-| `sag_task_advance` | Move to next Step/Phase, commit, create new branch |
 | `sag_task_approve` | Submit approval decision for a pending gate |
-| `sag_task_list` | List all tasks under `~/.hermes/sag_tasks/` |
+| `sag_task_list` | List all tasks with status |
+
+### Planning & Execution
+
+| Tool | Description |
+|------|-------------|
+| `sag_task_plan` | Generate structured subtask plan for the current step |
+| `sag_task_plan_update` | Update subtask status (done/failed), sync progress |
+| `sag_task_dispatch` | Build subagent context for a subtask, optional worktree isolation |
+| `sag_task_verify` | Run verification commands, record pass/fail |
+| `sag_task_review` | Build structured review prompt (step/phase/full scope) |
+
+### Methodology
+
+| Tool | Description |
+|------|-------------|
+| `sag_task_brainstorm` | Design exploration → option selection workflow |
+| `sag_task_debug` | Systematic debugging: reproduce → diagnose → fix |
+| `sag_task_metrics` | Query verification stats, coverage trends, throughput |
+
+### Git Operations
+
+| Tool | Description |
+|------|-------------|
 | `sag_task_commit` | Stage all + commit with message |
 | `sag_task_branch` | Create + push new branch |
 | `sag_task_git_log` | Show recent commit history |
@@ -45,53 +62,84 @@ No `pip install`, no extra dependencies, no `config.yaml` changes needed.
 
 ## Architecture
 
-### Plugin Registration (Standalone, Not a Memory Provider)
-
-SagTaskPlugin registers with Hermes Agent using `ctx.register_tool()` + `ctx.register_hook()` — it does **not** implement the `MemoryProvider` ABC and does not take the `memory.provider` slot.
-
 ```
+src/sagtask/
+├── __init__.py          ← register(), re-exports
+├── plugin.py            ← SagTaskPlugin class, layered context injection
+├── hooks.py             ← pre_llm_call, on_session_start
+├── schemas.py           ← 19 tool JSON schemas
+├── _utils.py            ← constants, shared helpers
+└── handlers/
+    ├── __init__.py      ← _tool_handlers dispatch dict
+    ├── _lifecycle.py    ← create, status, advance, pause, resume, approve, list
+    ├── _plan.py         ← plan, plan_update, verify, brainstorm, debug
+    ├── _orchestration.py← dispatch, review, context builders
+    ├── _metrics.py      ← metrics query handler
+    └── _git.py          ← commit, branch, git_log, relate
+```
+
+### Plugin Registration
+
+```python
 register(ctx)
-    ├── ctx.register_tool("sag_task_create", ...)
-    ├── ctx.register_tool("sag_task_status", ...)
-    │    ...
-    ├── ctx.register_tool("sag_task_relate", ...)
-    ├── ctx.register_hook("pre_llm_call",  _on_pre_llm_call)   ← task context injection
-    └── ctx.register_hook("on_session_start", _on_session_start) ← restore active task
+    ├── ctx.register_tool("sag_task_*", ...) × 19
+    ├── ctx.register_hook("pre_llm_call", ...)    # layered context injection
+    └── ctx.register_hook("on_session_start", ...) # restore active task
 ```
 
-### Hooks
+---
 
-| Hook | Purpose |
-|------|---------|
-| `pre_llm_call` | Called before each LLM call; injects active task context into the user message block |
-| `on_session_start` | Restores the active task marker from `~/.hermes/sag_tasks/.active_task` on session startup |
+## Context Injection — Layered System
 
-### Tool Set (11 tools)
+SagTask injects a compact, adaptive context block before each LLM call. The system minimizes token usage by only including information that has changed or is urgently needed.
 
-**Task Lifecycle:**
+| Layer | Content | Frequency |
+|-------|---------|-----------|
+| **L0** | `[SagTask] task=X status=active phase=P step=S` | Every turn |
+| **L1** | Phase/step names, pending gates | On change + blocking gates |
+| **L1.5** | Artifacts summary | On change |
+| **L2** | Methodology phase, plan progress, failures | On change |
+| **L3** | Verification status, metrics (pass rate, coverage) | On change + blocking |
+| **L4a** | Related tasks hint ("2 tasks available") | When relationships exist |
+| **L4b** | Related task details | First turn, step switch, user intent |
 
-| Tool | Description |
-|------|-------------|
-| `sag_task_create` | Create task with phased steps/gates, init Git repo + GitHub repo |
-| `sag_task_status` | Show current phase/step/pending gates (verbose: full tree + git log) |
-| `sag_task_pause` | Snapshot PausedExecutionContext to `executions/` |
-| `sag_task_resume` | Restore from most recent paused execution |
-| `sag_task_advance` | Move to next Step/Phase: write task_state, commit, create new branch |
-| `sag_task_approve` | Submit approval decision for a pending gate |
+**Cache:** Per-session per-task cache with context hashing. Stable state → single L0 line (~50 tokens). Changed state → relevant layers expand.
 
-**Task Discovery:**
+---
 
-| Tool | Description |
-|------|-------------|
-| `sag_task_list` | List all tasks under `~/.hermes/sag_tasks/` with status |
+## Methodology System
 
-**Git Operations:**
+Each step can declare a `methodology` that guides execution:
 
-| Tool | Description |
-|------|-------------|
-| `sag_task_commit` | Stage all + commit with message |
-| `sag_task_branch` | Create + push new branch |
-| `sag_task_git_log` | Show recent commit history |
+| Type | Workflow |
+|------|----------|
+| `tdd` | RED → GREEN → REFACTOR cycle, auto-transitions on verify |
+| `brainstorm` | Generate 3+ options → user selects → implement |
+| `debug` | Reproduce → diagnose (hypothesis) → fix |
+| `plan-execute` | Plan subtasks → execute sequentially → verify each |
+| `none` | No methodology constraint (default) |
+
+---
+
+## Orchestration
+
+```
+sag_task_plan          → Generate subtasks from step description
+sag_task_dispatch      → Build subagent context, optional git worktree
+  └─ subagent executes → sag_task_plan_update(status="done")
+sag_task_review        → Spec compliance + quality review context
+sag_task_verify        → Run commands, record results to metrics
+sag_task_advance       → Move to next step (blocks if must_pass fails)
+```
+
+### Metrics
+
+Append-only event log (`.sag_metrics.jsonl`) tracks:
+- Verification runs (pass/fail, exit codes, coverage)
+- Subtask completions
+- Step advances, dispatches, pauses/resumes
+
+Query with `sag_task_metrics` for pass rates, coverage trends, and subtask throughput.
 
 ---
 
@@ -99,386 +147,53 @@ register(ctx)
 
 ```
 ~/.hermes/sag_tasks/<task_id>/
-├── .git/                           ← Task Git repo (lazy init)
-├── .gitignore                      ← Ignores: .sag_task_state.json, .sag_artifacts/, .sag_executions/
-├── .sag_task_state.json            ← Machine-readable state (NOT in Git)
-│
-├── src/                            ← ✅ In Git
-├── tests/                          ← ✅ In Git
-├── docs/                           ← ✅ In Git
-│
-├── .sag_artifacts/                 ← ⚠️ Git-ignored (manual cleanup)
-│   └── <step_id>/
-│
-└── .sag_executions/                ← ⚠️ Git-ignored (snapshot on pause)
-    └── <execution_id>.json
-```
-
-**Active task marker:** `~/.hermes/sag_tasks/.active_task` (plain text, one task_id)
-
----
-
-## Active Task Context Mechanism
-
-The active task is the task that the LLM is currently "inside" — its state gets injected before every LLM call via the `pre_llm_call` hook. Without an active task, sagtask's context injection is empty.
-
-### Marking a Task Active
-
-The active task is stored in a plain text marker file:
-
-```
-~/.hermes/sag_tasks/.active_task   ← contains: <task_id> (e.g. "sc-mrp-v1")
-```
-
-Three operations set the active task:
-
-| Operation | Effect |
-|-----------|--------|
-| `sag_task_create` | New task is automatically marked active |
-| `sag_task_resume` | The resumed task is marked active |
-| `sag_task_advance` | Moves to next step; task stays active |
-
-`on_session_start` hook calls `_restore_active_task()` on startup, which reads `.active_task` and restores the previously active task across sessions.
-
-### Context Injection — Two Layers
-
-SagTaskPlugin uses a **two-layer injection** approach:
-
-**Layer 1 — `on_session_start` hook (once per session)**
-
-`_restore_active_task()` runs at session startup — reads `.active_task` file and sets `_active_task_id`. No context block is emitted; the state is stored in the singleton.
-
-**Layer 2 — `pre_llm_call` hook (every LLM call)**
-
-Before each LLM call, `_on_pre_llm_call()` builds a compact task summary and returns it as part of the context dict:
-
-```python
-# What the hook returns:
-{"context": "## Active Task: sc-mrp-v1\n- Status: active\n- Phase: 数据建模  |  Step: 数据模型设计\n- Awaiting approval: gate-1-approve-model\n- Recent artifacts: 已完成 BOM 树设计，支持 3 层递归展开\n"}
-```
-
-When `_active_task_id` is `None`, `_on_pre_llm_call` returns `{}` — zero overhead when no task is active.
-
----
-
-## Cross-Task Relationships (→ v1.1.0)
-
-### Relationship Model
-
-Tasks have three relationship tiers:
-
-| Relationship | Strength | sagtask management |
-|-------------|----------|-------------------|
-| **Same task, same repo** | Strong | Fully managed (branch strategy, gates) |
-| **Cross-pollination** | Medium | Prefetch隐性感知 (方式一), then explicit references (方式二) |
-| **Weak/No relationship** | Weak | Not managed — user adds context manually |
-
-**Cross-pollination** targets: two tasks share the same research theme but follow different research paths with different directory structures. Artifacts from one may inspire the other, but git repos cannot be merged due to structural incompatibility.
-
-### Relationship Declaration
-
-```json
-{
-  "relationships": [
-    { "task_id": "sc-bom-research-v1", "relationship": "cross-pollination" }
-  ]
-}
-```
-
-### Artifact Summary
-
-```json
-{
-  "artifact_summaries": [
-    {
-      "path": "artifacts/bom-algorithm-sketch.md",
-      "summary": "BOM 展开算法草稿，递归实现思路，3 层深度限制",
-      "generated_at": "2026-04-26T10:00:00Z"
-    }
-  ]
-}
-```
-
-Summary generation: on-demand via LLM at prefetch time (方案 B), cached until next `sag_task_advance`.
-
-### Prefetch Injection
-
-```
-## Related Task Context (Cross-Pollination)
-
-### sc-bom-research-v1
-[artifacts/bom-algorithm-sketch.md]
-BOM 展开算法草稿，递归实现思路，3 层深度限制
-→ Use `sag_task_status(task_id="sc-bom-research-v1")` to see full context
-```
-
-Size controls: max 2 related tasks, max 3 artifacts per task, ~200 chars per summary.
-
-### From Implicit to Explicit (方式二)
-
-```json
-{
-  "relationships": [
-    {
-      "task_id": "sc-bom-research-v1",
-      "relationship": "cross-pollination",
-      "references": [
-        {
-          "artifact_path": "artifacts/bom-algorithm-sketch.md",
-          "at_commit": "a1b2c3d",
-          "note": "参考其递归展开思路"
-        }
-      ]
-    }
-  ]
-}
-```
-
-Adds: commit-level pinning + optional reference review gate.
-
----
-
-## Task State Schema
-
-```json
-{
-  "task_id": "sc-mrp-v1",
-  "name": "Supply Chain MRP System",
-  "description": "...",
-  "status": "active",
-  "created_at": "2026-04-24T12:00:00Z",
-  "updated_at": "2026-04-24T14:30:00Z",
-  "current_phase_id": "phase-2",
-  "current_step_id": "step-3-bom-engine",
-  "phases": [
-    {
-      "id": "phase-1",
-      "name": "数据建模",
-      "steps": [
-        {
-          "id": "step-1-data-model",
-          "name": "数据模型设计",
-          "description": "设计 BOM、库存、采购数据结构",
-          "gate": {
-            "id": "gate-1-approve-model",
-            "question": "数据模型是否满足需求？请确认或提出修改意见。",
-            "choices": ["Approve", "Reject", "Request Changes"]
-          }
-        }
-      ]
-    }
-  ],
-  "pending_gates": ["gate-1-approve-model"],
-  "artifacts_summary": "已完成 BOM 树设计，支持 3 层递归展开",
-  "decisions": [
-    {
-      "gate_id": "gate-1-approve-model",
-      "decision": "Approve",
-      "comment": "模型结构清晰，同意进入下一阶段",
-      "approved_at": "2026-04-24T14:00:00Z"
-    }
-  ],
-  "executions": ["exec-20260424-140000-abc123"],
-  "relationships": [
-    { "task_id": "sc-bom-research-v1", "relationship": "cross-pollination" }
-  ],
-  "artifact_summaries": [
-    {
-      "path": "artifacts/bom-algorithm-sketch.md",
-      "summary": "BOM 展开算法草稿，递归实现思路，3 层深度限制",
-      "generated_at": "2026-04-26T10:00:00Z"
-    }
-  ]
-}
+├── .git/                        ← Task Git repo
+├── .gitignore
+├── .sag_task_state.json         ← Machine-readable state (git-ignored)
+├── .sag_plans/                  ← Subtask plans (git-tracked)
+│   └── <step_id>.json
+├── .sag_metrics.jsonl           ← Metrics event log (git-ignored)
+├── .sag_artifacts/              ← Generated artifacts (git-ignored)
+├── .sag_executions/             ← Pause snapshots (git-ignored)
+├── .sag_worktrees/              ← Isolated subtask worktrees (git-ignored)
+└── src/, tests/, docs/          ← User code (git-tracked)
 ```
 
 ---
 
-## PausedExecutionContext Schema
+## Development
 
-```json
-{
-  "execution_id": "exec-20260424-140000-abc123",
-  "task_id": "sc-mrp-v1",
-  "status": "paused",
-  "paused_at": "2026-04-24T14:00:00Z",
-  "reason": "等待用户审批 BOM 方案",
-  "gate_id": "gate-1-approve-model",
-  "step_id": "step-1-data-model",
-  "phase_id": "phase-1",
-  "pending_tool_calls": [
-    {"id": "call-1", "name": "write_file", "args": {...}}
-  ],
-  "pending_tool_results": [],
-  "artifacts_summary": "已生成 bom_engine.py 草稿",
-  "session_context_summary": "BOM 展开算法第一版完成，待审批"
-}
-```
+```bash
+# Run tests
+python -m pytest tests/ -v
 
-**Note:** `pending_tool_calls` is a placeholder. Full capture requires cooperation from the agent loop (to be implemented in P1-1).
+# Run with coverage
+python -m pytest tests/ --cov=src/sagtask --cov-report=term-missing
 
----
+# Install for local Hermes dev
+./dev-install.sh
 
-## Git Strategy
+# Build release tarball
+bash scripts/build-release.sh 2.0.0
 
-### Per-Task Git Repo
-
-Each task has its own Git repository at `~/.hermes/sag_tasks/<task_id>/.git/`, pushed to `git@github.com:<username>/<task_id>.git`.
-
-### Lazy Initialization
-
-Git repo is initialized on first `git push`. The `ensure_git_repo()` method:
-1. If `.git/` exists → return True
-2. Otherwise → `git init`, write `.gitignore`, create initial commit, add remote
-
-### GitHub Repo Auto-Creation
-
-On `sag_task_create`:
-1. `gh repo create <task_id>` — creates public GitHub repo under `<username>/`
-2. `git push -u origin main` — pushes initial commit
-
-If repo already exists → skip creation, proceed to push.
-
-### Branch Strategy
-
-```
-main  ←  Latest stable, always buildable
- │
- ├─ step/phase-1/step-1-data-model
- │    └─ Merge to main after gate approval
- │
- └─ step/phase-2/step-3-bom-engine
-      ├─ WIP commit → pause (awaiting approval)
-      └─ Merge to main after gate approval
-```
-
-Branch naming: `step/<phase_id>/<step_id>-<short-description>`
-
-Commit convention: `[Step N] <description>`
-
-### .gitignore
-
-```
-task_state.json
-artifacts/
-executions/
-__pycache__/
-*.pyc
+# Bump version across all files
+bash scripts/bump-version.sh 2.1.0
 ```
 
 ---
 
-## Confirmed Design Decisions
+## Release Process
 
-| # | Question | Decision |
-|---|----------|----------|
-| Q1 | task.md generation | Optional, default OFF |
-| Q2 | executions/ snapshot | Write once on pause (not per tool_call) |
-| Q3 | artifacts/ cleanup | Manual by user |
-| Q4 | task_state.json update strategy | Write on Phase/Step/Gate change (not every sync_turn) |
-| Q5 | Git repo initialization | Lazy (first push) |
-| Q6 | Remote repository | Per-task GitHub repo (<username>/<task_id>) |
-| Q7 | Step branch strategy | One branch per Step |
-| Q8 | Git inclusion scope | All (src/, tests/, docs/, task.md) — artifacts/ excluded |
-
----
-
-## Confirmed Constants
-
-| Item | Value |
-|------|-------|
-| Plugin directory (user plugin) | `~/.hermes/plugins/sagtask/` |
-| Development source | `~/.hermes/plugins/sagtask/` (standalone user plugin, no bundled copy) |
-| Plugin name | `sagtask` |
-| Plugin class | `SagTaskPlugin` |
-| Task local root | `~/.hermes/sag_tasks/<task_id>/` |
-
----
-
-## Context Injection Strategy
-
-SagTaskPlugin uses a **two-layer injection** approach to balance context relevance and token efficiency.
-
-### Layer 1 — `on_session_start` hook (session startup, heavyweight)
-
-On session start, `_restore_active_task()` restores the active task marker. No large context block is emitted — the singleton holds the state.
-
-### Layer 2 — `pre_llm_call` hook (every LLM call, lightweight)
-
-Before each LLM call, `_on_pre_llm_call()` injects a compact task summary:
-
-```
-Current task: [task_id]
-Phase: Phase 2 (Step 3/5)
-Progress: 40%
-Status: Paused — awaiting your approval on gate-2-approve-algo
-Recent decisions: Tech stack finalized (方案A), architecture draft approved
-```
-
-This layer gives the LLM enough to understand:
-- Which project is active
-- Where it stopped
-- What's pending
-
-It is **not** the full task state — just a sufficient handoff summary.
-
-### Layer 2 — Detail Retrieval (Lightweight, On Request)
-
-During conversation, the user or LLM explicitly calls tools to get deeper information:
-
-| Tool | Returns |
-|------|---------|
-| `sag_task_status` | Full phase/step tree, pending gates, step description |
-| `sag_task_git_log` | Recent commits, branch history |
-| `sag_task_branch` | Current branch, uncommitted changes |
-| `sag_task_commit --summary` | All decisions recorded so far |
-| `sag_task_approve` | Details of a specific pending gate |
-
-### Why Not Full Injection?
-
-A project with many steps can generate large contexts:
-- Dozens of tool calls and their outputs
-- Multiple artifacts and intermediate files
-- Execution snapshots from paused sessions
-
-Full injection would:
-1. **Exhaust context window** — consuming capacity better used for active work
-2. **Dilute signal** — LLM gets buried in historical noise
-3. **Slow inference** — longer context = higher latency and cost
-
-### Practical Flow
-
-```
-User: "Continue where we left off"
-  → pre_llm_call hook injects overview (Phase 2, Step 3, 40%, paused)
-  → LLM knows the project state without reading all history
-
-User: "Walk me through the current step details"
-  → sag_task_status called → full step description + pending gates
-
-User: "What decisions have been made so far?"
-  → sag_task_commit --summary called → all gate decisions
-
-User: "I'm ready to approve gate-2"
-  → sag_task_approve called → decision recorded, step advances
+```bash
+bash scripts/bump-version.sh X.Y.Z
+# Update CHANGELOG.md
+git add -A && git commit -m "chore: release vX.Y.Z"
+git tag vX.Y.Z && git push origin main --tags
+# GitHub Actions builds artifact + creates release automatically
 ```
 
 ---
 
-## MemoryManager Integration
+## License
 
-SagTaskPlugin is **not** a memory provider. It does not require or use `memory.provider` in `config.yaml`. It coexists with any memory provider (honcho, mem0, etc.).
-
-- SagTask does not implement the `MemoryProvider` ABC
-- No `config.yaml` changes are required
-- Install and restart — the `pre_llm_call` hook activates automatically
-
----
-
----
-
-## Reference Implementation
-
-- **PluginContext (register_tool / register_hook):** `hermes_cli/plugins.py`
-- **Hook invocation:** `run_agent.py` — `pre_llm_call` and `on_session_start` hooks
-- **Example standalone plugin:** `plugins/memory/honcho/` (HonchoMemoryProvider — for reference only; SagTask does not use MemoryProvider ABC)
+MIT

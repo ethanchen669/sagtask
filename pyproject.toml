@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "sagtask-hermes"
-version = "1.2.0"
+version = "2.0.0"
 description = "Long-running task management plugin for Hermes Agent"
 readme = "README.md"
 license = "MIT"
