@@ -205,3 +205,107 @@ class TestPreLlmCallHook:
             model="test", platform="test", sender_id="test",
         )
         assert "[Related]" in result["context"]
+
+
+class TestLayerEdgeCases:
+    def _make_state(self, task_id="test-task", **overrides):
+        base = {
+            "sag_task_id": task_id,
+            "status": "active",
+            "current_phase_id": "p1",
+            "current_step_id": "s1",
+            "pending_gates": [],
+            "artifacts_summary": "",
+            "relationships": [],
+            "phases": [{"id": "p1", "name": "Phase 1", "steps": [{"id": "s1", "name": "Step 1"}]}],
+            "methodology_state": {
+                "current_methodology": "none",
+                "tdd_phase": None,
+                "debug_phase": None,
+                "brainstorm_phase": None,
+                "subtask_progress": {"total": 0, "completed": 0, "in_progress": 0, "failed": 0},
+                "last_verification": None,
+            },
+        }
+        base.update(overrides)
+        return base
+
+    def test_task_switch_triggers_full_expansion(self, isolated_sagtask):
+        """Switching tasks resets cache, triggers L1 even with same step_id."""
+        isolated_sagtask._active_task_id = "task-a"
+        state_a = self._make_state(task_id="task-a")
+        isolated_sagtask._build_layered_context(state_a, user_message="", session_id="s1")
+        # Second call for task-a — should be minimal
+        r_stable = isolated_sagtask._build_layered_context(state_a, user_message="", session_id="s1")
+        assert "Phase:" not in r_stable
+        # Now switch to task-b
+        isolated_sagtask._active_task_id = "task-b"
+        state_b = self._make_state(task_id="task-b")
+        result = isolated_sagtask._build_layered_context(state_b, user_message="", session_id="s1")
+        assert "Phase:" in result  # L1 triggered for new task
+
+    def test_stable_brainstorm_no_l4b_repeat(self, isolated_sagtask):
+        """After entering brainstorm, L4b should not repeat on subsequent turns."""
+        isolated_sagtask._active_task_id = "test-task"
+        state = self._make_state()
+        state["methodology_state"]["current_methodology"] = "brainstorm"
+        state["methodology_state"]["brainstorm_phase"] = "explore"
+        state["relationships"] = [{"sag_task_id": "rel1", "relationship": "cross-pollination"}]
+
+        # First call: methodology just entered → but cache.methodology starts as "", so
+        # methodology_just_entered fires only when cache.methodology != ""
+        # We need to prime the cache first with methodology="none"
+        state_before = self._make_state()
+        state_before["relationships"] = [{"sag_task_id": "rel1", "relationship": "cross-pollination"}]
+        isolated_sagtask._build_layered_context(state_before, user_message="", session_id="s1")
+
+        # Now switch to brainstorm — methodology_just_entered should fire
+        r1 = isolated_sagtask._build_layered_context(state, user_message="", session_id="s1")
+        # Second call: same methodology, no intent → no L4b
+        r2 = isolated_sagtask._build_layered_context(state, user_message="", session_id="s1")
+        assert "[Related]" in r1
+        assert "[Related]" not in r2
+
+    def test_l15_artifacts_on_change(self, isolated_sagtask):
+        """Artifacts summary appears when it changes from one value to another."""
+        isolated_sagtask._active_task_id = "test-task"
+        state = self._make_state(artifacts_summary="initial stuff")
+        isolated_sagtask._build_layered_context(state, user_message="", session_id="s1")
+        # Now change artifacts
+        state["artifacts_summary"] = "added auth module"
+        result = isolated_sagtask._build_layered_context(state, user_message="", session_id="s1")
+        assert "Artifacts: added auth module" in result
+
+    def test_cache_isolated_per_task(self, isolated_sagtask):
+        """Cache for task-a doesn't affect task-b."""
+        isolated_sagtask._active_task_id = "task-a"
+        state_a = self._make_state(task_id="task-a", artifacts_summary="something")
+        isolated_sagtask._build_layered_context(state_a, user_message="", session_id="s1")
+
+        isolated_sagtask._active_task_id = "task-b"
+        state_b = self._make_state(task_id="task-b", artifacts_summary="something")
+        result = isolated_sagtask._build_layered_context(state_b, user_message="", session_id="s1")
+        # For task-b it's the first time — artifacts should show
+        assert "Artifacts:" in result
+
+    def test_user_intent_triggers_l4b(self, isolated_sagtask):
+        """User message with related keywords triggers L4b."""
+        isolated_sagtask._active_task_id = "test-task"
+        state = self._make_state()
+        state["relationships"] = [{"sag_task_id": "other", "relationship": "cross-pollination"}]
+        # First call primes cache
+        isolated_sagtask._build_layered_context(state, user_message="hello", session_id="s1")
+        # Second call with intent keyword
+        result = isolated_sagtask._build_layered_context(state, user_message="参考相关任务", session_id="s1")
+        assert "[Related]" in result
+
+    def test_l4a_hint_present_when_relationships_exist(self, isolated_sagtask):
+        """L4a hint shows count of related tasks."""
+        isolated_sagtask._active_task_id = "test-task"
+        state = self._make_state()
+        state["relationships"] = [
+            {"sag_task_id": "t1", "relationship": "cross-pollination"},
+            {"sag_task_id": "t2", "relationship": "cross-pollination"},
+        ]
+        result = isolated_sagtask._build_layered_context(state, user_message="", session_id="s1")
+        assert "2 task(s) available" in result
