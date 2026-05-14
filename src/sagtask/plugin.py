@@ -521,7 +521,10 @@ class SagTaskPlugin:
         first_turn = cache.context_hash == ""
         context_hash_changed = current_hash != cache.context_hash
         step_just_switched = step_id != cache.step_id and cache.step_id != ""
-        artifacts_summary_changed = state.get("artifacts_summary", "") != cache.artifacts_summary and cache.artifacts_summary != ""
+        artifacts_summary_changed = (
+            state.get("artifacts_summary", "") != cache.artifacts_summary
+            and (cache.artifacts_summary != "" or first_turn)
+        )
         methodology_just_entered = methodology != cache.methodology and methodology in ("brainstorm", "debug") and cache.methodology != ""
 
         # Metrics change detection
