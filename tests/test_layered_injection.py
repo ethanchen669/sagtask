@@ -309,3 +309,111 @@ class TestLayerEdgeCases:
         ]
         result = isolated_sagtask._build_layered_context(state, user_message="", session_id="s1")
         assert "2 task(s) available" in result
+
+
+class TestReviewRegressions:
+    """Regression tests for issues found during code review."""
+
+    def _make_state(self, task_id="test-task", **overrides):
+        base = {
+            "sag_task_id": task_id,
+            "status": "active",
+            "current_phase_id": "p1",
+            "current_step_id": "s1",
+            "pending_gates": [],
+            "artifacts_summary": "",
+            "relationships": [],
+            "phases": [{"id": "p1", "name": "Phase 1", "steps": [{"id": "s1", "name": "Step 1"}]}],
+            "methodology_state": {
+                "current_methodology": "none",
+                "tdd_phase": None,
+                "debug_phase": None,
+                "brainstorm_phase": None,
+                "subtask_progress": {"total": 0, "completed": 0, "in_progress": 0, "failed": 0},
+                "last_verification": None,
+            },
+        }
+        base.update(overrides)
+        return base
+
+    def test_dispatch_after_failure_preserves_failed_count(self, isolated_sagtask, mock_git):
+        """Dispatching a subtask after another failed must not erase the failed count."""
+        task_id = "test-dispatch-fail"
+        sagtask._handle_sag_task_create({
+            "sag_task_id": task_id,
+            "name": "Dispatch Fail",
+            "phases": [{"id": "p1", "name": "P1", "steps": [{"id": "s1", "name": "S1", "methodology": {"type": "tdd"}}]}],
+        })
+        sagtask._handle_sag_task_plan({"sag_task_id": task_id})
+
+        plan_path = isolated_sagtask.get_task_root(task_id) / ".sag_plans" / "s1.json"
+        plan = json.loads(plan_path.read_text())
+        subtask_ids = [s["id"] for s in plan["subtasks"]]
+
+        # Mark first subtask as failed
+        sagtask._handle_sag_task_plan_update({"sag_task_id": task_id, "subtask_id": subtask_ids[0], "status": "failed"})
+        state = isolated_sagtask.load_task_state(task_id)
+        assert state["methodology_state"]["subtask_progress"]["failed"] == 1
+
+        # Dispatch second subtask — failed count must survive
+        sagtask._handle_sag_task_dispatch({"sag_task_id": task_id, "subtask_id": subtask_ids[1]})
+        state = isolated_sagtask.load_task_state(task_id)
+        assert state["methodology_state"]["subtask_progress"]["failed"] == 1
+
+        # Context should still show "1 failed"
+        isolated_sagtask._active_task_id = task_id
+        result = isolated_sagtask._build_layered_context(state, user_message="", session_id="s1")
+        assert "1 failed" in result
+
+    def test_passed_verification_metrics_on_first_turn(self, isolated_sagtask):
+        """First context build with passed verification + metrics must show Verify: line."""
+        import json as _json
+        task_id = "test-verify-pass"
+        task_root = isolated_sagtask._projects_root / task_id
+        task_root.mkdir()
+
+        events = [
+            {"ts": "2026-05-12T10:00:00Z", "event": "verify_run", "step_id": "s1", "phase_id": "p1", "command": "pytest", "exit_code": 0, "passed": True},
+            {"ts": "2026-05-12T10:01:00Z", "event": "verify_run", "step_id": "s1", "phase_id": "p1", "command": "pytest", "exit_code": 0, "passed": True},
+        ]
+        (task_root / ".sag_metrics.jsonl").write_text("\n".join(_json.dumps(e) for e in events) + "\n")
+
+        state = self._make_state(task_id=task_id)
+        state["phases"][0]["steps"][0]["verification"] = {"commands": ["pytest"], "must_pass": True}
+        state["methodology_state"]["last_verification"] = {"passed": True}
+
+        isolated_sagtask._active_task_id = task_id
+        result = isolated_sagtask._build_layered_context(state, user_message="", session_id="s1")
+        assert "Verify:" in result
+
+    def test_l4b_on_first_turn_with_relationships(self, isolated_sagtask):
+        """First turn for a task with relationships should emit [Related] details."""
+        isolated_sagtask._active_task_id = "test-task"
+        state = self._make_state()
+        state["relationships"] = [{"sag_task_id": "other-task", "relationship": "cross-pollination"}]
+        result = isolated_sagtask._build_layered_context(state, user_message="", session_id="s1")
+        assert "[Related]" in result
+
+    def test_task_switch_with_relationships_shows_related(self, isolated_sagtask):
+        """Switching tasks should show [Related] for the new task."""
+        # Prime cache for task-a
+        isolated_sagtask._active_task_id = "task-a"
+        state_a = self._make_state(task_id="task-a")
+        isolated_sagtask._build_layered_context(state_a, user_message="", session_id="s1")
+
+        # Switch to task-b which has relationships
+        isolated_sagtask._active_task_id = "task-b"
+        state_b = self._make_state(task_id="task-b")
+        state_b["relationships"] = [{"sag_task_id": "related-task", "relationship": "cross-pollination"}]
+        result = isolated_sagtask._build_layered_context(state_b, user_message="", session_id="s1")
+        assert "[Related]" in result
+
+    def test_relationship_identity_change_affects_hash(self, isolated_sagtask):
+        """Replacing one related task with another (same count) should change hash."""
+        state1 = self._make_state()
+        state1["relationships"] = [{"sag_task_id": "task-a", "relationship": "cross-pollination"}]
+        state2 = self._make_state()
+        state2["relationships"] = [{"sag_task_id": "task-b", "relationship": "cross-pollination"}]
+        h1 = isolated_sagtask._compute_context_hash(state1)
+        h2 = isolated_sagtask._compute_context_hash(state2)
+        assert h1 != h2

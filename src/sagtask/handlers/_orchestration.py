@@ -186,11 +186,12 @@ def _handle_sag_task_dispatch(args: Dict[str, Any]) -> Dict[str, Any]:
     total = len(plan["subtasks"])
     completed = sum(1 for s in plan["subtasks"] if s["status"] == "done")
     in_progress = sum(1 for s in plan["subtasks"] if s["status"] == "in_progress")
+    failed = sum(1 for s in plan["subtasks"] if s["status"] == "failed")
     state = {
         **state,
         "methodology_state": {
             **ms,
-            "subtask_progress": {"total": total, "completed": completed, "in_progress": in_progress},
+            "subtask_progress": {"total": total, "completed": completed, "in_progress": in_progress, "failed": failed},
         },
     }
     p.save_task_state(task_id, state)
