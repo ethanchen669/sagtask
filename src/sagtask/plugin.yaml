@@ -1,5 +1,5 @@
 name: sagtask
-version: 2.0.0
+version: 2.0.1
 description: |
   SagTask — standalone user plugin for long-running task management.
   Per-task Git repos, human-in-the-loop approval gates, cross-session recovery.

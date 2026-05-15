@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.1] - 2026-05-15
+
+### Fixed
+- Use relative imports throughout so plugin loads correctly under `hermes_plugins.*` namespace
+- Add `**kwargs` to all 19 tool handlers for Hermes `registry.dispatch()` compatibility
+- `install.sh`: no longer deletes plugin before download succeeds
+- `install.sh`: uses `gh auth token` to avoid GitHub API rate limit
+- `install.sh`: replaces git installation instead of aborting
+
+### Added
+- Integration tests against real hermes-agent source (plugin loading, dispatch kwargs, hook signatures)
+
 ## [2.0.0] - 2026-05-14
 
 ### Added
