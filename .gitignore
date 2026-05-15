@@ -3,3 +3,8 @@
 .sag_executions/
 __pycache__/
 *.pyc
+*.tmp
+tmp.*
+.tmp.*
+*_tmp
+tmp_*
