@@ -15,7 +15,7 @@ from .._utils import (
 logger = logging.getLogger(__name__)
 
 
-def _handle_sag_task_list(args: Dict[str, Any]) -> Dict[str, Any]:
+def _handle_sag_task_list(args: Dict[str, Any], **kwargs: Any) -> Dict[str, Any]:
     p = _get_provider()
     status_filter = args.get("status_filter", "all")
     projects_root = p._projects_root
@@ -45,7 +45,7 @@ def _handle_sag_task_list(args: Dict[str, Any]) -> Dict[str, Any]:
     return {"ok": True, "tasks": tasks}
 
 
-def _handle_sag_task_commit(args: Dict[str, Any]) -> Dict[str, Any]:
+def _handle_sag_task_commit(args: Dict[str, Any], **kwargs: Any) -> Dict[str, Any]:
     p = _get_provider()
     task_id = args.get("sag_task_id") or p._active_task_id
     message = args.get("message", "")
@@ -72,7 +72,7 @@ def _handle_sag_task_commit(args: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _handle_sag_task_branch(args: Dict[str, Any]) -> Dict[str, Any]:
+def _handle_sag_task_branch(args: Dict[str, Any], **kwargs: Any) -> Dict[str, Any]:
     p = _get_provider()
     task_id = args.get("sag_task_id") or p._active_task_id
     branch_name = args.get("branch_name")
@@ -98,7 +98,7 @@ def _handle_sag_task_branch(args: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _handle_sag_task_git_log(args: Dict[str, Any]) -> Dict[str, Any]:
+def _handle_sag_task_git_log(args: Dict[str, Any], **kwargs: Any) -> Dict[str, Any]:
     p = _get_provider()
     task_id = args.get("sag_task_id") or p._active_task_id
     max_count = args.get("max_count", 20)
