@@ -40,7 +40,19 @@ fi
 
 # ── Fetch latest release info ───────────────────────────────────────────────
 
-RELEASE_JSON=$(curl -fsSL "https://api.github.com/repos/${OWNER}/${REPO}/releases/latest")
+AUTH_HEADER=()
+if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+    AUTH_HEADER=(-H "Authorization: token ${GITHUB_TOKEN}")
+elif command -v gh &>/dev/null && gh auth status &>/dev/null 2>&1; then
+    GH_TOKEN=$(gh auth token 2>/dev/null || true)
+    [[ -n "${GH_TOKEN:-}" ]] && AUTH_HEADER=(-H "Authorization: token ${GH_TOKEN}")
+fi
+
+RELEASE_JSON=$(curl -fsSL "${AUTH_HEADER[@]}" "https://api.github.com/repos/${OWNER}/${REPO}/releases/latest" 2>&1) || {
+    echo "✗ Failed to fetch release info (GitHub API rate limit or network error)."
+    echo "  Fix: export GITHUB_TOKEN=<your-token> and retry, or install gh CLI."
+    exit 1
+}
 VERSION=$(echo "$RELEASE_JSON" | grep -o '"tag_name": "[^"]*"' | cut -d'"' -f4)
 
 if [[ -z "$VERSION" ]]; then
