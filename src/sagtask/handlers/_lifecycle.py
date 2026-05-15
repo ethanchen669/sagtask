@@ -20,7 +20,7 @@ from .._utils import (
 logger = logging.getLogger(__name__)
 
 
-def _handle_sag_task_create(args: Dict[str, Any]) -> Dict[str, Any]:
+def _handle_sag_task_create(args: Dict[str, Any], **kwargs: Any) -> Dict[str, Any]:
     p = _get_provider()
     task_id = args["sag_task_id"]
     validation_err = _validate_task_id(task_id)
@@ -86,7 +86,7 @@ def _handle_sag_task_create(args: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _handle_sag_task_status(args: Dict[str, Any]) -> Dict[str, Any]:
+def _handle_sag_task_status(args: Dict[str, Any], **kwargs: Any) -> Dict[str, Any]:
     p = _get_provider()
     task_id = args.get("sag_task_id") or p._active_task_id
     verbose = args.get("verbose", False)
@@ -133,7 +133,7 @@ def _handle_sag_task_status(args: Dict[str, Any]) -> Dict[str, Any]:
     return result
 
 
-def _handle_sag_task_pause(args: Dict[str, Any]) -> Dict[str, Any]:
+def _handle_sag_task_pause(args: Dict[str, Any], **kwargs: Any) -> Dict[str, Any]:
     p = _get_provider()
     task_id = args.get("sag_task_id") or p._active_task_id
     reason = args.get("reason", "")
@@ -191,7 +191,7 @@ def _handle_sag_task_pause(args: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _handle_sag_task_resume(args: Dict[str, Any]) -> Dict[str, Any]:
+def _handle_sag_task_resume(args: Dict[str, Any], **kwargs: Any) -> Dict[str, Any]:
     p = _get_provider()
     task_id = args.get("sag_task_id") or p._active_task_id
 
@@ -252,7 +252,7 @@ def _handle_sag_task_resume(args: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _handle_sag_task_advance(args: Dict[str, Any]) -> Dict[str, Any]:
+def _handle_sag_task_advance(args: Dict[str, Any], **kwargs: Any) -> Dict[str, Any]:
     p = _get_provider()
     task_id = args.get("sag_task_id") or p._active_task_id
     commit_message = args.get("commit_message", "")
@@ -378,7 +378,7 @@ def _handle_sag_task_advance(args: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _handle_sag_task_approve(args: Dict[str, Any]) -> Dict[str, Any]:
+def _handle_sag_task_approve(args: Dict[str, Any], **kwargs: Any) -> Dict[str, Any]:
     p = _get_provider()
     task_id = args.get("sag_task_id") or p._active_task_id
     gate_id = args.get("gate_id")

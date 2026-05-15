@@ -126,7 +126,7 @@ def _build_dispatch_context(
     return context
 
 
-def _handle_sag_task_dispatch(args: Dict[str, Any]) -> Dict[str, Any]:
+def _handle_sag_task_dispatch(args: Dict[str, Any], **kwargs: Any) -> Dict[str, Any]:
     """Dispatch a subtask for execution by building subagent context."""
     p = _get_provider()
     task_id = args.get("sag_task_id") or p._active_task_id
@@ -482,7 +482,7 @@ def _build_debug_context(
     return "\n".join(lines)
 
 
-def _handle_sag_task_review(args: Dict[str, Any]) -> Dict[str, Any]:
+def _handle_sag_task_review(args: Dict[str, Any], **kwargs: Any) -> Dict[str, Any]:
     """Build a structured review prompt for the current step."""
     p = _get_provider()
     task_id = args.get("sag_task_id") or p._active_task_id

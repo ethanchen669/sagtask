@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 MAX_CROSS_POLLINATION = 2
 
 
-def _handle_sag_task_relate(args: Dict[str, Any]) -> Dict[str, Any]:
+def _handle_sag_task_relate(args: Dict[str, Any], **kwargs: Any) -> Dict[str, Any]:
     p = _get_provider()
     task_id = args.get("sag_task_id") or p._active_task_id
     related_task_id = args.get("related_task_id")
@@ -85,7 +85,7 @@ def _handle_sag_task_relate(args: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _handle_sag_task_verify(args: Dict[str, Any]) -> Dict[str, Any]:
+def _handle_sag_task_verify(args: Dict[str, Any], **kwargs: Any) -> Dict[str, Any]:
     p = _get_provider()
     task_id = args.get("sag_task_id") or p._active_task_id
 
@@ -202,7 +202,7 @@ def _handle_sag_task_verify(args: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _handle_sag_task_plan(args: Dict[str, Any]) -> Dict[str, Any]:
+def _handle_sag_task_plan(args: Dict[str, Any], **kwargs: Any) -> Dict[str, Any]:
     p = _get_provider()
     task_id = args.get("sag_task_id") or p._active_task_id
     granularity = args.get("granularity", "medium")
@@ -256,7 +256,7 @@ def _handle_sag_task_plan(args: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _handle_sag_task_brainstorm(args: Dict[str, Any]) -> Dict[str, Any]:
+def _handle_sag_task_brainstorm(args: Dict[str, Any], **kwargs: Any) -> Dict[str, Any]:
     """Build brainstorm context or record design selection."""
     from ._orchestration import _build_brainstorm_context
 
@@ -338,7 +338,7 @@ def _handle_sag_task_brainstorm(args: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _handle_sag_task_debug(args: Dict[str, Any]) -> Dict[str, Any]:
+def _handle_sag_task_debug(args: Dict[str, Any], **kwargs: Any) -> Dict[str, Any]:
     """Build debug context or record hypothesis/fix."""
     from .._utils import DEBUG_PHASE_DIAGNOSE, DEBUG_PHASE_FIX, DEBUG_PHASE_REPRODUCE
     from ._orchestration import _build_debug_context
@@ -451,7 +451,7 @@ def _build_debug_response(
     }
 
 
-def _handle_sag_task_plan_update(args: Dict[str, Any]) -> Dict[str, Any]:
+def _handle_sag_task_plan_update(args: Dict[str, Any], **kwargs: Any) -> Dict[str, Any]:
     p = _get_provider()
     task_id = args.get("sag_task_id") or p._active_task_id
     subtask_id = args.get("subtask_id", "")

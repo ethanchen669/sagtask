@@ -133,7 +133,7 @@ def _compute_throughput(events: List[Dict[str, Any]], plan_total: int = 0) -> Di
     }
 
 
-def _handle_sag_task_metrics(args: Dict[str, Any]) -> Dict[str, Any]:
+def _handle_sag_task_metrics(args: Dict[str, Any], **kwargs: Any) -> Dict[str, Any]:
     """Query metrics from the event log."""
     p = _get_provider()
     task_id = args.get("sag_task_id") or p._active_task_id
