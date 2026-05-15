@@ -28,12 +28,13 @@ echo ""
 
 # ── Detect existing installation ────────────────────────────────────────────
 
+IS_GIT_INSTALL=false
+CURRENT_VER=""
 if [[ -d "$PLUGIN_DIR" ]]; then
     if [[ -e "$PLUGIN_DIR/.git" ]]; then
-        echo "  Replacing existing git installation with release version..."
-        rm -rf "$PLUGIN_DIR"
+        IS_GIT_INSTALL=true
+        echo "  Detected existing git installation, will replace with release version."
     else
-        CURRENT_VER=""
         [[ -f "$PLUGIN_DIR/VERSION" ]] && CURRENT_VER=$(cat "$PLUGIN_DIR/VERSION")
     fi
 fi
@@ -60,7 +61,7 @@ if [[ -z "$VERSION" ]]; then
     exit 1
 fi
 
-if [[ "${CURRENT_VER:-}" == "${VERSION#v}" ]]; then
+if [[ "$IS_GIT_INSTALL" == "false" && "${CURRENT_VER:-}" == "${VERSION#v}" ]]; then
     echo "✓ Already at latest version (${VERSION}). Nothing to do."
     exit 0
 fi
@@ -72,7 +73,6 @@ echo "  Version: ${VERSION}${CURRENT_VER:+ (upgrading from ${CURRENT_VER})}"
 ASSET_URL=$(echo "$RELEASE_JSON" | grep -o '"browser_download_url": "[^"]*sagtask-[^"]*\.tar\.gz"' | cut -d'"' -f4)
 
 if [[ -z "$ASSET_URL" ]]; then
-    # Fallback: use source tarball if no asset uploaded
     echo "  ⚠ No release asset found, falling back to source tarball..."
     ASSET_URL=$(echo "$RELEASE_JSON" | grep -o '"tarball_url": "[^"]*"' | cut -d'"' -f4)
     USE_SOURCE_TARBALL=true
@@ -81,22 +81,28 @@ else
 fi
 
 echo "→ Downloading..."
-curl -fsSL "$ASSET_URL" -o "$TMPDIR/sagtask.tar.gz"
+curl -fsSL "${AUTH_HEADER[@]}" "$ASSET_URL" -o "$TMPDIR/sagtask.tar.gz"
 
 # ── Verify checksum (if available) ──────────────────────────────────────────
 
 SHA_URL=$(echo "$RELEASE_JSON" | grep -o '"browser_download_url": "[^"]*\.sha256"' | cut -d'"' -f4)
 if [[ -n "${SHA_URL:-}" ]]; then
-    curl -fsSL "$SHA_URL" -o "$TMPDIR/expected.sha256"
+    curl -fsSL "${AUTH_HEADER[@]}" "$SHA_URL" -o "$TMPDIR/expected.sha256"
     EXPECTED=$(cat "$TMPDIR/expected.sha256" | cut -d' ' -f1)
-    ACTUAL=$(sha256sum "$TMPDIR/sagtask.tar.gz" | cut -d' ' -f1)
-    if [[ "$EXPECTED" != "$ACTUAL" ]]; then
+    if command -v sha256sum &>/dev/null; then
+        ACTUAL=$(sha256sum "$TMPDIR/sagtask.tar.gz" | cut -d' ' -f1)
+    elif command -v shasum &>/dev/null; then
+        ACTUAL=$(shasum -a 256 "$TMPDIR/sagtask.tar.gz" | cut -d' ' -f1)
+    else
+        ACTUAL=""
+    fi
+    if [[ -n "$ACTUAL" && "$EXPECTED" != "$ACTUAL" ]]; then
         echo "✗ Checksum mismatch!"
         echo "  Expected: ${EXPECTED}"
         echo "  Got:      ${ACTUAL}"
         exit 1
     fi
-    echo "  ✓ Checksum verified"
+    [[ -n "$ACTUAL" ]] && echo "  ✓ Checksum verified"
 fi
 
 # ── Extract ─────────────────────────────────────────────────────────────────
@@ -105,11 +111,9 @@ cd "$TMPDIR"
 tar -xzf sagtask.tar.gz
 
 if [[ "$USE_SOURCE_TARBALL" == "true" ]]; then
-    # Source tarball: find src/sagtask/ inside
     EXTRACT_DIR=$(find . -mindepth 1 -maxdepth 1 -type d | head -1)
     SOURCE_DIR="${EXTRACT_DIR}/src/sagtask"
 else
-    # Release asset: sagtask/ is at root of tarball
     SOURCE_DIR="./sagtask"
 fi
 
@@ -118,23 +122,11 @@ if [[ ! -f "${SOURCE_DIR}/__init__.py" ]]; then
     exit 1
 fi
 
-# ── Install ─────────────────────────────────────────────────────────────────
+# ── Install (only delete old after download+extract succeeded) ─────────────
 
 rm -rf "$PLUGIN_DIR"
 mkdir -p "$(dirname "$PLUGIN_DIR")"
 cp -r "$SOURCE_DIR" "$PLUGIN_DIR"
-
-# ── Enable in config ────────────────────────────────────────────────────────
-
-CONFIG_FILE="${HOME}/.hermes/config.yaml"
-if [[ -f "$CONFIG_FILE" ]]; then
-    if ! grep -q "sagtask" "$CONFIG_FILE" 2>/dev/null; then
-        echo "  → Adding 'sagtask' to plugins.enabled in config.yaml"
-        echo "  ⚠ Please verify sagtask is in plugins.enabled in ${CONFIG_FILE}"
-    fi
-else
-    echo "  ⚠ No config.yaml found. Add 'sagtask' to plugins.enabled after setup."
-fi
 
 # ── Verify ──────────────────────────────────────────────────────────────────
 
