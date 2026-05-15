@@ -35,8 +35,9 @@ include = ["src/sagtask/", "README.md", "LICENSE"]
 testpaths = ["tests"]
 markers = [
     "e2e: end-to-end tests requiring hermes CLI",
+    "integration: tests requiring hermes-agent source code",
 ]
-addopts = "--tb=short -q"
+addopts = "--tb=short -q -m 'not integration'"
 
 [tool.coverage.run]
 source = ["src/sagtask"]
