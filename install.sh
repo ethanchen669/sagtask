@@ -30,11 +30,12 @@ echo ""
 
 if [[ -d "$PLUGIN_DIR" ]]; then
     if [[ -e "$PLUGIN_DIR/.git" ]]; then
-        echo "✗ ${PLUGIN_DIR} is a git installation. Use: git -C ${PLUGIN_DIR} pull"
-        exit 1
+        echo "  Replacing existing git installation with release version..."
+        rm -rf "$PLUGIN_DIR"
+    else
+        CURRENT_VER=""
+        [[ -f "$PLUGIN_DIR/VERSION" ]] && CURRENT_VER=$(cat "$PLUGIN_DIR/VERSION")
     fi
-    CURRENT_VER=""
-    [[ -f "$PLUGIN_DIR/VERSION" ]] && CURRENT_VER=$(cat "$PLUGIN_DIR/VERSION")
 fi
 
 # ── Fetch latest release info ───────────────────────────────────────────────
