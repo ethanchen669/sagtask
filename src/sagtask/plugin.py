@@ -235,7 +235,7 @@ class SagTaskPlugin:
 
     def get_tool_schemas(self) -> List[Dict[str, Any]]:
         # Lazy import to avoid circular dependency (schemas import triggers sagtask init)
-        from sagtask.schemas import ALL_TOOL_SCHEMAS  # noqa: F811
+        from .schemas import ALL_TOOL_SCHEMAS  # noqa: F811
         return ALL_TOOL_SCHEMAS
 
     def handle_tool_call(self, tool_name: str, args: Dict[str, Any], **kwargs) -> str:

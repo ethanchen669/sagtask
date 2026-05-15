@@ -25,7 +25,7 @@ from ._utils import (  # noqa: E402
 )
 from . import _utils  # noqa: E402
 
-from sagtask.schemas import (  # noqa: F401
+from .schemas import (  # noqa: F401
     ALL_TOOL_SCHEMAS,
     TASK_ADVANCE_SCHEMA,
     TASK_APPROVE_SCHEMA,
@@ -48,8 +48,8 @@ from sagtask.schemas import (  # noqa: F401
     TASK_METRICS_SCHEMA,
 )
 
-from sagtask.plugin import SagTaskPlugin  # noqa: F401
-from sagtask.handlers._lifecycle import (  # noqa: F401
+from .plugin import SagTaskPlugin  # noqa: F401
+from .handlers._lifecycle import (  # noqa: F401
     _handle_sag_task_advance,
     _handle_sag_task_approve,
     _handle_sag_task_create,
@@ -57,14 +57,14 @@ from sagtask.handlers._lifecycle import (  # noqa: F401
     _handle_sag_task_resume,
     _handle_sag_task_status,
 )
-from sagtask.handlers._git import (  # noqa: F401
+from .handlers._git import (  # noqa: F401
     _handle_sag_task_branch,
     _handle_sag_task_commit,
     _handle_sag_task_git_log,
     _handle_sag_task_list,
 )
 
-from sagtask.handlers._plan import (  # noqa: F401
+from .handlers._plan import (  # noqa: F401
     _handle_sag_task_plan,
     _handle_sag_task_plan_update,
     _handle_sag_task_relate,
@@ -73,17 +73,17 @@ from sagtask.handlers._plan import (  # noqa: F401
     _handle_sag_task_debug,
 )
 
-from sagtask.handlers._orchestration import (  # noqa: F401
+from .handlers._orchestration import (  # noqa: F401
     _handle_sag_task_dispatch,
     _handle_sag_task_review,
 )
 
-from sagtask.handlers._metrics import _handle_sag_task_metrics  # noqa: F401
+from .handlers._metrics import _handle_sag_task_metrics  # noqa: F401
 
-from sagtask.handlers import _tool_handlers  # noqa: F401
+from .handlers import _tool_handlers  # noqa: F401
 
 # ── Hook callbacks — re-exported from hooks.py ───────────────────────────────
-from sagtask.hooks import _on_pre_llm_call, _on_session_start  # noqa: F401
+from .hooks import _on_pre_llm_call, _on_session_start  # noqa: F401
 
 
 # Backward-compat: tests do ``sagtask._sagtask_instance = None``.
