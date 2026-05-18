@@ -1,0 +1,132 @@
+{
+  "sag_task_id": "sagtask-devop",
+  "name": "sagtask 持续开发与验证",
+  "description": "SagTask 插件自身的迭代开发——从单文件 11 工具架构演进为模块化 19 工具系统，包含分层上下文注入、方法论引擎、编排调度和指标采集，并通过与 hermes-agent 源码的集成测试确保部署可靠性。",
+  "status": "active",
+  "created_at": "2026-04-20T00:00:00Z",
+  "updated_at": "2026-05-18T12:00:00Z",
+  "current_phase_id": "phase-5",
+  "current_step_id": "step-5-1",
+  "phases": [
+    {
+      "id": "phase-1",
+      "name": "核心框架搭建",
+      "steps": [
+        {"id": "step-1-1", "name": "插件骨架与工具注册 (register/ctx)", "status": "done"},
+        {"id": "step-1-2", "name": "生命周期工具 (create/status/pause/resume/advance/approve)", "status": "done"},
+        {"id": "step-1-3", "name": "Git 操作工具 (commit/branch/git_log/list)", "status": "done"},
+        {"id": "step-1-4", "name": "任务状态持久化与 active_task 标记", "status": "done"},
+        {"id": "step-1-5", "name": "安装脚本与发布打包 (install.sh/build-release.sh)", "status": "done"}
+      ]
+    },
+    {
+      "id": "phase-2",
+      "name": "方法论与验证引擎",
+      "steps": [
+        {"id": "step-2-1", "name": "Schema v2 与 methodology_state 迁移", "status": "done"},
+        {"id": "step-2-2", "name": "sag_task_verify 工具与 must_pass 门控", "status": "done"},
+        {"id": "step-2-3", "name": "TDD 状态机 (red/green 自动转换)", "status": "done"},
+        {"id": "step-2-4", "name": "sag_task_brainstorm 设计探索工具", "status": "done"},
+        {"id": "step-2-5", "name": "sag_task_debug 系统化调试工具 (reproduce→diagnose→fix)", "status": "done"},
+        {"id": "step-2-6", "name": "sag_task_relate 任务关联与 cross-pollination", "status": "done"}
+      ]
+    },
+    {
+      "id": "phase-3",
+      "name": "编排与调度",
+      "steps": [
+        {"id": "step-3-1", "name": "sag_task_plan 子任务计划生成", "status": "done"},
+        {"id": "step-3-2", "name": "sag_task_plan_update 子任务进度跟踪", "status": "done"},
+        {"id": "step-3-3", "name": "sag_task_dispatch 子代理上下文构建与分发", "status": "done"},
+        {"id": "step-3-4", "name": "sag_task_review 两阶段代码审查", "status": "done"},
+        {"id": "step-3-5", "name": "Git worktree 隔离执行", "status": "done"}
+      ]
+    },
+    {
+      "id": "phase-4",
+      "name": "上下文注入与指标",
+      "steps": [
+        {"id": "step-4-1", "name": "sag_task_metrics 查询工具 (验证/覆盖率/吞吐量)", "status": "done"},
+        {"id": "step-4-2", "name": "append-only 事件日志 (.sag_metrics.jsonl)", "status": "done"},
+        {"id": "step-4-3", "name": "分层上下文注入设计 (L0-L4b)", "status": "done"},
+        {"id": "step-4-4", "name": "_InjectionCache 会话缓存与上下文哈希", "status": "done"},
+        {"id": "step-4-5", "name": "指标摘要注入 (pass rate/coverage trend/progress)", "status": "done"}
+      ]
+    },
+    {
+      "id": "phase-5",
+      "name": "质量保障与持续运维",
+      "steps": [
+        {
+          "id": "step-5-1",
+          "name": "hermes-agent 集成测试",
+          "status": "done",
+          "verification": {
+            "commands": ["python -m pytest tests/test_hermes_integration.py -m integration -v"],
+            "must_pass": true
+          }
+        },
+        {
+          "id": "step-5-2",
+          "name": "回归测试全量通过",
+          "verification": {
+            "commands": ["python -m pytest tests/ -m '' --tb=short"],
+            "must_pass": true
+          }
+        },
+        {
+          "id": "step-5-3",
+          "name": "hermes-agent API 变更适配"
+        },
+        {
+          "id": "step-5-4",
+          "name": "新工具/新方法论扩展"
+        }
+      ]
+    }
+  ],
+  "pending_gates": [],
+  "artifacts_summary": "v2.0.1 released; 19 tools, modular handlers/, layered injection, 264 tests (253 unit + 11 integration)",
+  "decisions": [
+    {
+      "gate_id": "arch-modularize",
+      "decision": "Approve",
+      "comment": "从单文件拆分为 handlers/ 子包，使用相对导入确保 hermes_plugins 命名空间兼容",
+      "approved_at": "2026-05-14T00:00:00Z"
+    },
+    {
+      "gate_id": "context-injection-design",
+      "decision": "Approve",
+      "comment": "采用 L0-L4b 分层注入，会话内缓存+哈希去重",
+      "approved_at": "2026-05-13T00:00:00Z"
+    },
+    {
+      "gate_id": "integration-test-strategy",
+      "decision": "Approve",
+      "comment": "使用 hermes-agent 源码直接加载插件并验证 dispatch kwargs 签名",
+      "approved_at": "2026-05-15T00:00:00Z"
+    }
+  ],
+  "executions": [],
+  "relationships": [],
+  "artifact_summaries": [
+    {"path": "src/sagtask/", "summary": "插件主包: __init__.py (注册入口), plugin.py (核心类+缓存注入), hooks.py, schemas.py, _utils.py, handlers/"},
+    {"path": "tests/test_hermes_integration.py", "summary": "11 个集成测试验证插件在 hermes 命名空间下的加载、注册、dispatch kwargs 和 hook 签名"},
+    {"path": "scripts/", "summary": "build-release.sh (打包), bump-version.sh (版本同步), install.sh (用户安装)"}
+  ],
+  "schema_version": 2,
+  "methodology_state": {
+    "current_methodology": "tdd",
+    "tdd_phase": null,
+    "plan_file": null,
+    "subtask_progress": {"total": 0, "completed": 0, "in_progress": 0, "failed": 0},
+    "last_verification": {
+      "passed": true,
+      "timestamp": "2026-05-18T12:00:00Z",
+      "results": [
+        {"command": "python -m pytest tests/ -m '' --tb=short", "exit_code": 0, "stdout": "264 passed", "stderr": ""}
+      ]
+    },
+    "review_state": null
+  }
+}
