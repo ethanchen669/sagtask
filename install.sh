@@ -18,6 +18,7 @@ set -euo pipefail
 OWNER="ethanchen669"
 REPO="sagtask"
 PLUGIN_DIR="${HOME}/.hermes/plugins/sagtask"
+SKILL_DIR="${HOME}/.hermes/skills/sagtask"
 TMPDIR=$(mktemp -d)
 
 cleanup() { rm -rf "$TMPDIR"; }
@@ -127,6 +128,12 @@ fi
 rm -rf "$PLUGIN_DIR"
 mkdir -p "$(dirname "$PLUGIN_DIR")"
 cp -r "$SOURCE_DIR" "$PLUGIN_DIR"
+
+# Install skill metadata for /sagtask slash command
+if [[ -f "${SOURCE_DIR}/SKILL.md" ]]; then
+    mkdir -p "$(dirname "$SKILL_DIR")"
+    cp "${SOURCE_DIR}/SKILL.md" "$SKILL_DIR"
+fi
 
 # ── Verify ──────────────────────────────────────────────────────────────────
 
