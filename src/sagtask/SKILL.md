@@ -1,7 +1,7 @@
 ---
 name: sagtask
 description: 长期任务管理系统，支持分阶段推进、审批门、Git 产物追踪、子任务派发。
-version: 2.0.1
+version: 2.0.3
 category: productivity
 tags: [task-management, multi-phase, git, dispatch, tdd, brainstorming]
 author: ethanchen669
