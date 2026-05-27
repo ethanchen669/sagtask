@@ -13,8 +13,6 @@ echo "→ Building SagTask release ${VERSION}"
 # 1. Copy entire package tree (excluding __pycache__)
 mkdir -p "${BUILD_DIR}/sagtask"
 rsync -a --exclude='__pycache__' src/sagtask/ "${BUILD_DIR}/sagtask/"
-# Include SKILL.md for Hermes skill discovery (at ~/.hermes/skills/sagtask/)
-cp SKILL.md "${BUILD_DIR}/sagtask/"
 echo "${VERSION}" > "${BUILD_DIR}/sagtask/VERSION"
 
 # 2. Update version in plugin.yaml
