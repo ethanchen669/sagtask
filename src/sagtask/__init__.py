@@ -7,6 +7,7 @@ recovery. This is a thin re-export layer; logic lives in submodules:
 
 from __future__ import annotations
 
+import json
 import logging
 import subprocess  # noqa: F401 — re-exported for test mock targets (conftest patches sagtask.subprocess.run)
 
@@ -118,7 +119,7 @@ def register(ctx) -> None:
             name=tool_name,
             toolset="sagtask",
             schema=schema,
-            handler=handler,
+            handler=lambda args, _handler=handler, **kw: json.dumps(_handler(args, **kw), ensure_ascii=False),
             description=schema.get("description", ""),
         )
         logger.debug("Registered tool: %s", tool_name)
