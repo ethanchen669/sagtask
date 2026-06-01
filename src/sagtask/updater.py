@@ -27,6 +27,28 @@ def _get_skill_dir() -> Path:
     return Path.home() / ".hermes" / "skills" / "sagtask"
 
 
+def _all_plugin_dirs() -> list[Path]:
+    """Return all sagtask plugin directories: default + all profiles."""
+    dirs = [_get_plugin_dir()]
+    profiles_root = Path.home() / ".hermes" / "profiles"
+    if profiles_root.is_dir():
+        for profile in sorted(profiles_root.iterdir()):
+            if profile.is_dir() and (profile / "plugins").is_dir():
+                dirs.append(profile / "plugins" / "sagtask")
+    return dirs
+
+
+def _all_skill_dirs() -> list[Path]:
+    """Return all sagtask skill directories: default + all profiles."""
+    dirs = [_get_skill_dir()]
+    profiles_root = Path.home() / ".hermes" / "profiles"
+    if profiles_root.is_dir():
+        for profile in sorted(profiles_root.iterdir()):
+            if profile.is_dir() and (profile / "skills").is_dir():
+                dirs.append(profile / "skills" / "sagtask")
+    return dirs
+
+
 def _current_version() -> Optional[str]:
     vf = _get_plugin_dir() / "VERSION"
     if vf.exists():
@@ -97,9 +119,6 @@ def check_for_update() -> Tuple[Optional[str], Optional[str]]:
 
 def perform_update() -> str:
     """Download and install the latest release. Returns a status message."""
-    plugin_dir = _get_plugin_dir()
-    skill_dir = _get_skill_dir()
-
     if _is_git_install():
         return (
             "Git-based installation detected. Run `cd ~/.hermes/plugins/sagtask && git pull` instead."
@@ -145,17 +164,23 @@ def perform_update() -> str:
         if not (source / "__init__.py").exists():
             return "Invalid archive: __init__.py not found."
 
-        # Install (only delete old after successful extract)
-        if plugin_dir.exists():
-            shutil.rmtree(plugin_dir)
-        shutil.copytree(source, plugin_dir)
+        # Install to default + all profiles
+        installed = []
+        for plugin_dir in _all_plugin_dirs():
+            if plugin_dir.exists():
+                shutil.rmtree(plugin_dir)
+            plugin_dir.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(source, plugin_dir)
+            installed.append(str(plugin_dir))
 
-        # Install skill metadata
+        # Install skill metadata to default + all profiles
         if (source / "SKILL.md").exists():
-            skill_dir.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(source / "SKILL.md", skill_dir)
+            for skill_dir in _all_skill_dirs():
+                skill_dir.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source / "SKILL.md", skill_dir)
 
-        return f"Updated {current} → {latest}. Restart Hermes to load the new version."
+        profiles_msg = f" ({len(installed)} locations)" if len(installed) > 1 else ""
+        return f"Updated {current} → {latest}{profiles_msg}. Restart Hermes to load the new version."
 
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)

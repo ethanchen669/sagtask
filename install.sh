@@ -142,6 +142,33 @@ echo "→ Verifying installation..."
 [[ -f "${PLUGIN_DIR}/plugin.yaml" ]] || { echo "✗ plugin.yaml missing"; exit 1; }
 echo "  ✓ Files verified"
 
+# ── Install to all profiles ────────────────────────────────────────────────
+
+PROFILES_DIR="${HOME}/.hermes/profiles"
+if [[ -d "$PROFILES_DIR" ]]; then
+    for profile_dir in "$PROFILES_DIR"/*/; do
+        [[ -d "$profile_dir" ]] || continue
+        profile_name=$(basename "$profile_dir")
+        profile_plugin_dir="${profile_dir}plugins/sagtask"
+        profile_skill_dir="${profile_dir}skills/sagtask"
+
+        # Skip if profile doesn't have a plugins dir
+        [[ -d "${profile_dir}plugins" ]] || continue
+
+        echo "→ Updating profile: ${profile_name}"
+        rm -rf "$profile_plugin_dir"
+        cp -r "$SOURCE_DIR" "$profile_plugin_dir"
+
+        # Install skill metadata per profile
+        if [[ -f "${SOURCE_DIR}/SKILL.md" ]]; then
+            mkdir -p "$profile_skill_dir"
+            cp "${SOURCE_DIR}/SKILL.md" "$profile_skill_dir/"
+        fi
+
+        echo "  ✓ ${profile_name} → ${profile_plugin_dir}"
+    done
+fi
+
 # ── Done ────────────────────────────────────────────────────────────────────
 
 if pgrep -f "hermes.*gateway" > /dev/null 2>&1; then
