@@ -85,6 +85,43 @@ from .handlers import _tool_handlers  # noqa: F401
 
 # ── Hook callbacks — re-exported from hooks.py ───────────────────────────────
 from .hooks import _on_pre_llm_call, _on_session_start  # noqa: F401
+from .updater import check_for_update, perform_update  # noqa: F401
+
+
+# ── Slash command handler ───────────────────────────────────────────────────
+_HELP_TEXT = """\
+SagTask — long-running task management
+
+Usage: /sagtask <command>
+
+Commands:
+  update    Check for updates and install the latest release
+  version   Show current installed version
+  help      Show this help message
+"""
+
+
+def _handle_sagtask_command(raw_args: str) -> Optional[str]:
+    argv = raw_args.strip().split()
+    sub = argv[0] if argv else "help"
+
+    if sub in ("help", "-h", "--help"):
+        return _HELP_TEXT
+
+    if sub == "version":
+        from .updater import _current_version
+        ver = _current_version()
+        return f"SagTask v{ver}" if ver else "SagTask: VERSION file not found."
+
+    if sub == "update":
+        current, latest = check_for_update()
+        if current is None:
+            return "Failed to check for updates (network or API error)."
+        if current == latest:
+            return f"SagTask is already at the latest version (v{current})."
+        return perform_update()
+
+    return f"Unknown command: {sub}\n\n{_HELP_TEXT}"
 
 
 # Backward-compat: tests do ``sagtask._sagtask_instance = None``.
@@ -127,4 +164,13 @@ def register(ctx) -> None:
     # ── Hooks ───────────────────────────────────────────────────────────────
     ctx.register_hook("pre_llm_call", _on_pre_llm_call)
     ctx.register_hook("on_session_start", _on_session_start)
-    logger.info("SagTask plugin registered (tools=%d, hooks=pre_llm_call+on_session_start)", len(_tool_handlers))
+
+    # ── Slash command ──────────────────────────────────────────────────────
+    ctx.register_command(
+        "sagtask",
+        handler=_handle_sagtask_command,
+        description="SagTask management: update, version, help",
+        args_hint="[update|version|help]",
+    )
+
+    logger.info("SagTask plugin registered (tools=%d, hooks=pre_llm_call+on_session_start, command=/sagtask)", len(_tool_handlers))

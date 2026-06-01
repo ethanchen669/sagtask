@@ -19,8 +19,9 @@ class TestContextInjection:
                 }],
             }],
         })
-        active_file = plugin._projects_root / ".active_task"
-        active_file.write_text("test-ctx")
+        import json
+        active_file = plugin._projects_root / ".active_tasks.json"
+        active_file.write_text(json.dumps({"default": "test-ctx"}))
 
     def test_context_includes_methodology_type(self, isolated_sagtask, mock_git):
         """Context should include methodology type when set."""
@@ -64,8 +65,9 @@ class TestContextInjection:
                 "steps": [{"id": "step-1", "name": "Step 1"}],
             }],
         })
-        active_file = isolated_sagtask._projects_root / ".active_task"
-        active_file.write_text("test-ctx-none")
+        import json
+        active_file = isolated_sagtask._projects_root / ".active_tasks.json"
+        active_file.write_text(json.dumps({"default": "test-ctx-none"}))
         result = sagtask._on_pre_llm_call(
             session_id="test", user_message="hello", conversation_history=[],
             is_first_turn=True, model="test", platform="test", sender_id="test",

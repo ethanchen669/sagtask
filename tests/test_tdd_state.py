@@ -80,8 +80,9 @@ class TestTDDStateMachine:
         state = isolated_sagtask.load_task_state("test-tdd")
         state["methodology_state"]["tdd_phase"] = "green"
         isolated_sagtask.save_task_state("test-tdd", state)
-        active_file = isolated_sagtask._projects_root / ".active_task"
-        active_file.write_text("test-tdd")
+        import json
+        active_file = isolated_sagtask._projects_root / ".active_tasks.json"
+        active_file.write_text(json.dumps({"default": "test-tdd"}))
         result = sagtask._on_pre_llm_call(
             session_id="test", user_message="", conversation_history=[],
             is_first_turn=True, model="test", platform="test", sender_id="test",

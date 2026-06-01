@@ -149,15 +149,16 @@ class TestGitLog:
 
 class TestRestoreActiveTask:
     def test_restore_with_valid_marker(self, isolated_sagtask, mock_git):
+        import json
         task_id = "test-restore"
         sagtask._handle_sag_task_create({
             "sag_task_id": task_id,
             "name": "Restore Test",
             "phases": [{"id": "p1", "name": "P1", "steps": [{"id": "s1", "name": "S1"}]}],
         })
-        marker = isolated_sagtask._projects_root / ".active_task"
-        marker.write_text(task_id)
-        isolated_sagtask._active_task_id = None
+        marker = isolated_sagtask._projects_root / ".active_tasks.json"
+        marker.write_text(json.dumps({"default": task_id}))
+        isolated_sagtask._active_tasks = {}
         isolated_sagtask._restore_active_task()
         assert isolated_sagtask._active_task_id == task_id
 
@@ -167,26 +168,77 @@ class TestRestoreActiveTask:
         assert isolated_sagtask._active_task_id is None
 
     def test_restore_invalid_task(self, isolated_sagtask):
-        marker = isolated_sagtask._projects_root / ".active_task"
-        marker.write_text("nonexistent_task")
-        isolated_sagtask._active_task_id = None
+        import json
+        marker = isolated_sagtask._projects_root / ".active_tasks.json"
+        marker.write_text(json.dumps({"default": "nonexistent_task"}))
+        isolated_sagtask._active_tasks = {}
         isolated_sagtask._restore_active_task()
         assert isolated_sagtask._active_task_id is None
 
 
 class TestSetActiveTask:
     def test_set_active_task(self, isolated_sagtask):
+        import json
         isolated_sagtask._set_active_task("task-1")
         assert isolated_sagtask._active_task_id == "task-1"
-        marker = isolated_sagtask._projects_root / ".active_task"
-        assert marker.read_text() == "task-1"
+        marker = isolated_sagtask._projects_root / ".active_tasks.json"
+        data = json.loads(marker.read_text())
+        assert data["default"] == "task-1"
 
     def test_clear_active_task(self, isolated_sagtask):
-        marker = isolated_sagtask._projects_root / ".active_task"
-        marker.write_text("task-1")
+        import json
+        marker = isolated_sagtask._projects_root / ".active_tasks.json"
+        marker.write_text(json.dumps({"default": "task-1"}))
         isolated_sagtask._set_active_task(None)
         assert isolated_sagtask._active_task_id is None
-        assert not marker.exists()
+
+
+class TestMultiProfile:
+    def test_profiles_have_independent_active_tasks(self, isolated_sagtask, mock_git):
+        """Different profiles should have independent active tasks."""
+        for tid in ("task-a", "task-b"):
+            sagtask._handle_sag_task_create({
+                "sag_task_id": tid, "name": tid,
+                "phases": [{"id": "p1", "name": "P1", "steps": [{"id": "s1", "name": "S1"}]}],
+            })
+
+        # Simulate profile-1 by setting _hermes_home
+        isolated_sagtask._hermes_home = isolated_sagtask._projects_root.parent / "profiles" / "profile-1"
+        isolated_sagtask._set_active_task("task-a")
+
+        # Simulate profile-2
+        isolated_sagtask._hermes_home = isolated_sagtask._projects_root.parent / "profiles" / "profile-2"
+        isolated_sagtask._set_active_task("task-b")
+
+        # Verify isolation
+        isolated_sagtask._hermes_home = isolated_sagtask._projects_root.parent / "profiles" / "profile-1"
+        assert isolated_sagtask._active_task_id == "task-a"
+
+        isolated_sagtask._hermes_home = isolated_sagtask._projects_root.parent / "profiles" / "profile-2"
+        assert isolated_sagtask._active_task_id == "task-b"
+
+    def test_migration_from_legacy(self, isolated_sagtask, mock_git):
+        """Legacy .active_task file should be auto-migrated to .active_tasks.json."""
+        sagtask._handle_sag_task_create({
+            "sag_task_id": "old-task", "name": "Old",
+            "phases": [{"id": "p1", "name": "P1", "steps": [{"id": "s1", "name": "S1"}]}],
+        })
+        # Write legacy format
+        legacy = isolated_sagtask._projects_root / ".active_task"
+        legacy.write_text("old-task")
+        json_file = isolated_sagtask._projects_root / ".active_tasks.json"
+        if json_file.exists():
+            json_file.unlink()
+
+        # Reset to hermes_home without profiles dir so _profile_id returns "default"
+        isolated_sagtask._hermes_home = isolated_sagtask._projects_root.parent
+        isolated_sagtask._restore_active_task()
+
+        assert isolated_sagtask._active_task_id == "old-task"
+        assert json_file.exists()
+        data = json.loads(json_file.read_text())
+        assert data == {"default": "old-task"}
+        assert not legacy.exists()
 
 
 class TestLoadTaskState:

@@ -52,8 +52,9 @@ class TestOnSessionStart:
         plugin = sagtask.SagTaskPlugin()
         plugin._projects_root = tmp_path / "sag_tasks"
         plugin._projects_root.mkdir()
-        marker = plugin._projects_root / ".active_task"
-        marker.write_text("restored-task")
+        import json
+        marker = plugin._projects_root / ".active_tasks.json"
+        marker.write_text(json.dumps({"default": "restored-task"}))
         sagtask._utils._sagtask_instance = plugin
         # Create a minimal state file so _restore_active_task finds it
         task_root = plugin._projects_root / "restored-task"

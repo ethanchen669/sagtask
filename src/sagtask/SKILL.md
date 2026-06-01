@@ -1,7 +1,7 @@
 ---
 name: sagtask
 description: 长期任务管理系统，支持分阶段推进、审批门、Git 产物追踪、子任务派发。
-version: 2.0.4
+version: 2.1.0
 category: productivity
 tags: [task-management, multi-phase, git, dispatch, tdd, brainstorming]
 author: ethanchen669
@@ -111,6 +111,8 @@ sag_task_commit message: "[Step 2] 完成技术方案文档"
 | `sag_task_dispatch` | 派发子任务给 subagent 独立执行 |
 | `sag_task_review` | 执行两步评审（spec 合规 + 代码质量）|
 | `sag_task_metrics` | 查询验证统计、覆盖率趋势、吞吐量 |
+
+**斜杠命令**：`/sagtask update` — 检查并安装最新版本，`/sagtask version` — 查看当前版本。
 
 ---
 
@@ -237,10 +239,13 @@ sag_task_debug hypothesis: "根因是 N+1 查询"
 ## 安装与更新
 
 ```bash
-# 克隆
-git clone https://github.com/ethanchen669/sagtask.git ~/.hermes/plugins/sagtask
+# 安装（一键脚本）
+curl -fsSL https://raw.githubusercontent.com/ethanchen669/sagtask/main/install.sh | bash
 
-# 更新
+# 更新（在对话中使用）
+/sagtask update
+
+# 更新（git 克隆的安装方式）
 cd ~/.hermes/plugins/sagtask && git pull
 
 # 发布

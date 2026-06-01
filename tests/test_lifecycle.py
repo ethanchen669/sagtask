@@ -22,8 +22,10 @@ class TestTaskCreate:
         })
         p = _get_provider()
         assert p._active_task_id == "create-test"
-        marker = p._projects_root / ".active_task"
-        assert marker.read_text().strip() == "create-test"
+        import json
+        marker = p._projects_root / ".active_tasks.json"
+        data = json.loads(marker.read_text())
+        assert data["default"] == "create-test"
 
     def test_create_writes_state_file(self, isolated_sagtask, mock_git, sample_phases):
         _handle_sag_task_create({

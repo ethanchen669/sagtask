@@ -39,13 +39,37 @@ class SagTaskPlugin:
     MAX_ARTIFACT_SUMMARIES = 3
     SUMMARY_TRUNCATE_AT = 200
 
+    _ACTIVE_TASKS_FILE = ".active_tasks.json"
+    _ACTIVE_TASK_LEGACY = ".active_task"
+
     def __init__(self):
         self._hermes_home: Optional[Path] = None
         self._projects_root: Optional[Path] = None
-        self._active_task_id: Optional[str] = None
+        self._active_tasks: Dict[str, Optional[str]] = {}
         self._active_execution_id: Optional[str] = None
         self._injection_cache: Dict[tuple, _InjectionCache] = {}
         self._injection_lock = threading.Lock()
+
+    def _profile_id(self) -> str:
+        """Derive profile ID from _hermes_home path."""
+        if not self._hermes_home:
+            return "default"
+        parts = self._hermes_home.parts
+        try:
+            idx = parts.index("profiles")
+            if idx + 1 < len(parts):
+                return parts[idx + 1]
+        except ValueError:
+            pass
+        return "default"
+
+    @property
+    def _active_task_id(self) -> Optional[str]:
+        return self._active_tasks.get(self._profile_id())
+
+    @_active_task_id.setter
+    def _active_task_id(self, value: Optional[str]) -> None:
+        self._active_tasks[self._profile_id()] = value
 
     @property
     def name(self) -> str:
@@ -163,19 +187,48 @@ class SagTaskPlugin:
         ]
 
     def _restore_active_task(self) -> None:
-        marker = self._projects_root / ".active_task"
-        if marker.exists():
-            task_id = marker.read_text().strip()
-            if task_id and self.get_task_state_path(task_id).exists():
-                self._active_task_id = task_id
+        json_path = self._projects_root / self._ACTIVE_TASKS_FILE
+        legacy_path = self._projects_root / self._ACTIVE_TASK_LEGACY
+
+        # Migration: legacy single-file -> JSON
+        if not json_path.exists() and legacy_path.exists():
+            self._migrate_legacy_active_task(json_path, legacy_path)
+
+        # Load from JSON
+        if json_path.exists():
+            try:
+                self._active_tasks = json.loads(json_path.read_text())
+            except (json.JSONDecodeError, OSError):
+                self._active_tasks = {}
+
+        # Validate the task for current profile
+        pid = self._profile_id()
+        task_id = self._active_tasks.get(pid)
+        if task_id and not self.get_task_state_path(task_id).exists():
+            self._active_tasks[pid] = None
+
+    def _migrate_legacy_active_task(self, json_path: Path, legacy_path: Path) -> None:
+        task_id = legacy_path.read_text().strip()
+        data = {"default": task_id} if task_id else {}
+        self._atomic_write_json(json_path, data)
+        try:
+            legacy_path.unlink()
+        except OSError:
+            pass
 
     def _set_active_task(self, task_id: Optional[str]) -> None:
-        self._active_task_id = task_id
-        marker = self._projects_root / ".active_task"
-        if task_id:
-            marker.write_text(task_id)
-        elif marker.exists():
-            marker.unlink()
+        pid = self._profile_id()
+        self._active_tasks[pid] = task_id
+        self._persist_active_tasks()
+
+    def _persist_active_tasks(self) -> None:
+        json_path = self._projects_root / self._ACTIVE_TASKS_FILE
+        self._atomic_write_json(json_path, self._active_tasks)
+
+    def _atomic_write_json(self, path: Path, data: dict) -> None:
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False))
+        os.replace(str(tmp), str(path))
 
     def load_task_state(self, task_id: str) -> Optional[Dict[str, Any]]:
         path = self.get_task_state_path(task_id)
