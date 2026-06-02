@@ -4,6 +4,45 @@ A Hermes Agent **standalone user plugin** for long-running, multi-phase tasks wi
 
 > **SagTask is NOT a memory provider.** It coexists with any memory system and injects task context via the `pre_llm_call` hook.
 
+## Multi-Agent Collaboration
+
+Hermes supports multiple **profiles** (agents) that share the same `~/.hermes/sag_tasks/` directory — all agents collaborate on the same pool of tasks. But each agent tracks its **own** active task independently:
+
+```
+~/.hermes/
+├── plugins/sagtask/              ← Default profile plugin
+├── profiles/
+│   ├── hbuilder/plugins/sagtask/ ← Profile "hbuilder" plugin
+│   └── hexpert/plugins/sagtask/  ← Profile "hexpert" plugin
+└── sag_tasks/                    ← Shared task pool (all agents)
+    ├── .active_tasks.json        ← Per-profile active task tracking
+    ├── my-project/               ← Task Git repo (shared)
+    └── another-task/             ← Task Git repo (shared)
+```
+
+**`.active_tasks.json`** tracks which task each agent is working on:
+
+```json
+{
+  "default": "my-project",
+  "hbuilder": "sagtask-devop",
+  "hexpert": null
+}
+```
+
+**How it works:**
+- Each profile's `SagTaskPlugin` derives its profile ID from the `_hermes_home` path (`~/.hermes/profiles/<name>`)
+- `_active_task_id` is a `@property` that transparently reads/writes the correct entry in the dict
+- **Zero changes needed in handlers or hooks** — the property abstraction handles everything
+- Legacy `.active_task` files are auto-migrated on first read
+
+**Installation:** `install.sh` and `/sagtask update` automatically install the plugin to **all** profiles:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ethanchen669/sagtask/main/install.sh | bash
+# Installs to ~/.hermes/plugins/sagtask/ + every ~/.hermes/profiles/*/plugins/sagtask/
+```
+
 ## Quick Install
 
 ```bash
@@ -15,6 +54,16 @@ Or manually:
 ```bash
 git clone https://github.com/ethanchen669/sagtask.git ~/.hermes/plugins/sagtask
 # Restart your Hermes gateway to load the plugin
+```
+
+### Self-Update
+
+SagTask has a built-in `/sagtask` slash command:
+
+```
+/sagtask update    → Check GitHub releases, download + install to all profiles
+/sagtask version   → Show current installed version
+/sagtask help      → Show usage
 ```
 
 ## Tools (19)
