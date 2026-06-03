@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-06-03
+
+### Added
+- `sag_task_rules` tool — manage development rules: list/add/update/remove/toggle
+- 12 built-in development rules auto-loaded on task creation
+- Smart rule context injection (L2.5 layer) based on methodology and phase
+- Global rules at `~/.hermes/sag_tasks/.rules.json` + per-task overrides
+- `rules.py` module with CRUD, merge, smart selection, and context builder
+
+### Changed
+- Tools count: 19 → 20
+- Task initial state includes 12 default rule stubs
+- Context injection now includes L2.5 rules layer
+
+### Fixed
+- Release workflow: handle existing GitHub releases gracefully (idempotent)
+
+## [2.1.1] - 2026-06-02
+
+### Fixed
+- PyPI package name: `sagtask-hermes` → `sagtask`
+- Release workflow: `environment: pypi` for trusted publishing
+- Release workflow: clean `dist/` before `python -m build`
+
+## [2.1.0] - 2026-06-02
+
+### Added
+- Multi-profile active task tracking via `.active_tasks.json`
+- Per-profile `_active_task_id` property for transparent read/write
+- Legacy `.active_task` file auto-migration
+- `install.sh` installs to all profiles automatically
+- `/sagtask update` installs to all profiles
+- Prominent multi-agent multi-task mechanism documentation in README
+
+### Changed
+- `_active_task` file → `.active_tasks.json` dict for multi-profile support
+
 ## [2.0.1] - 2026-05-15
 
 ### Fixed
