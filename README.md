@@ -104,7 +104,7 @@ SagTask has a built-in `/sagtask` slash command:
 |------|-------------|
 | `sag_task_rules` | Manage development rules: list/add/update/remove/toggle |
 
-12 built-in rules auto-loaded on task creation. Smart context injection selects relevant rules based on methodology and phase.
+12 built-in rules auto-loaded on task creation. Smart context injection selects relevant rules based on methodology and phase. See [Development Rules System](#development-rules-system) for details.
 
 ### Git Operations
 
@@ -124,8 +124,9 @@ src/sagtask/
 ├── __init__.py          ← register(), re-exports
 ├── plugin.py            ← SagTaskPlugin class, layered context injection
 ├── hooks.py             ← pre_llm_call, on_session_start
-├── schemas.py           ← 19 tool JSON schemas
+├── schemas.py           ← 20 tool JSON schemas
 ├── _utils.py            ← constants, shared helpers
+├── rules.py             ← 12 default rules, CRUD, smart context selection
 └── handlers/
     ├── __init__.py      ← _tool_handlers dispatch dict
     ├── _lifecycle.py    ← create, status, advance, pause, resume, approve, list
@@ -139,7 +140,7 @@ src/sagtask/
 
 ```python
 register(ctx)
-    ├── ctx.register_tool("sag_task_*", ...) × 19
+    ├── ctx.register_tool("sag_task_*", ...) × 20
     ├── ctx.register_hook("pre_llm_call", ...)    # layered context injection
     └── ctx.register_hook("on_session_start", ...) # restore active task
 ```
@@ -156,6 +157,7 @@ SagTask injects a compact, adaptive context block before each LLM call. The syst
 | **L1** | Phase/step names, pending gates | On change + blocking gates |
 | **L1.5** | Artifacts summary | On change |
 | **L2** | Methodology phase, plan progress, failures | On change |
+| **L2.5** | Selected development rules (smart filtering) | On change + first turn |
 | **L3** | Verification status, metrics (pass rate, coverage) | On change + blocking |
 | **L4a** | Related tasks hint ("2 tasks available") | When relationships exist |
 | **L4b** | Related task details | First turn, step switch, user intent |
@@ -175,6 +177,66 @@ Each step can declare a `methodology` that guides execution:
 | `debug` | Reproduce → diagnose (hypothesis) → fix |
 | `plan-execute` | Plan subtasks → execute sequentially → verify each |
 | `none` | No methodology constraint (default) |
+
+---
+
+## Development Rules System
+
+12 built-in rules guide agent behavior across all tasks. Rules use a **global defaults + per-task overrides** pattern.
+
+### Storage
+
+- **Global rules:** `~/.hermes/sag_tasks/.rules.json` — shared across all tasks
+- **Per-task overrides:** `.sag_task_state.json` → `rules` field — task-specific additions/toggles
+
+### The 12 Rules
+
+| # | Rule | Category |
+|---|------|----------|
+| 1 | **Think Before Editing.** State assumptions explicitly; ask when uncertain; present options when ambiguous. | thinking |
+| 2 | **Simplicity first.** Minimum code that solves the problem. No speculative design, no unrequested features. | thinking |
+| 3 | **Surgical changes.** Touch only necessary code; don't refactor unrequested parts; match existing style. | process |
+| 4 | **Goal-driven.** Define verification criteria and loop until met, don't follow rigid step sequences. | process |
+| 5 | **LLM for judgment only.** Use LLM for classification, drafting, summarization, extraction. Use code for routing, retries, deterministic transforms. | quality |
+| 6 | **Manage Context Deliberately.** Treat context as a limited resource. For long tasks, maintain compact checkpoints: objective, files changed, commands run, artifacts produced, unresolved assumptions, next step. Load targeted files first; avoid broad dumps. Never skip required reading or verification to save context. | quality |
+| 7 | **Surface conflicts, don't average them.** When patterns contradict, pick one and explain; flag the other for cleanup. | thinking |
+| 8 | **Read Before Writing.** Check exports, callers, shared utilities before adding code. Ask when unclear. | process |
+| 9 | **Tests encode intent.** Tests should encode why behavior matters, not just pass when business logic changes. | quality |
+| 10 | **Checkpoint every step.** Summarize progress, verify state, list remaining work. Stop and restate position when lost. | process |
+| 11 | **Match codebase conventions.** Consistency over personal preference. Raise disagreements explicitly, don't silently change style. | style |
+| 12 | **Fail loudly.** Skipping tests and saying 'tests pass' is misleading. Surface uncertainty by default. | quality |
+
+### Smart Context Injection
+
+Rules are injected into `pre_llm_call` context at **L2.5**, filtered by current state:
+
+| Trigger | Rules Injected |
+|---------|---------------|
+| methodology = `tdd` | rule-9 (tests encode intent) |
+| methodology = `brainstorm` | rule-1 (think first), rule-7 (surface conflicts) |
+| methodology = `debug` | rule-12 (fail loudly), rule-4 (goal-driven) |
+| Pending gates | rule-3 (surgical changes), rule-10 (checkpoint) |
+| First turn | All 12 rules |
+| No special state | rule-1, rule-2, rule-12 (core three) |
+
+### Managing Rules
+
+```bash
+# List current task's rules
+sag_task_rules action: list
+
+# Add a custom rule (task-level)
+sag_task_rules action: add content: "Use type hints on all functions" task_id: "my-project" category: "quality"
+
+# Add a global rule
+sag_task_rules action: add content: "All PRs need 2 approvals" category: "process"
+
+# Toggle a rule on/off
+sag_task_rules action: toggle rule_id: "rule-6" task_id: "my-project"
+
+# Remove a custom rule
+sag_task_rules action: remove rule_id: "rule-custom-abc123" task_id: "my-project"
+```
 
 ---
 
@@ -203,17 +265,20 @@ Query with `sag_task_metrics` for pass rates, coverage trends, and subtask throu
 ## Storage Layout
 
 ```
-~/.hermes/sag_tasks/<task_id>/
-├── .git/                        ← Task Git repo
-├── .gitignore
-├── .sag_task_state.json         ← Machine-readable state (git-ignored)
-├── .sag_plans/                  ← Subtask plans (git-tracked)
-│   └── <step_id>.json
-├── .sag_metrics.jsonl           ← Metrics event log (git-ignored)
-├── .sag_artifacts/              ← Generated artifacts (git-ignored)
-├── .sag_executions/             ← Pause snapshots (git-ignored)
-├── .sag_worktrees/              ← Isolated subtask worktrees (git-ignored)
-└── src/, tests/, docs/          ← User code (git-tracked)
+~/.hermes/sag_tasks/
+├── .active_tasks.json           ← Per-profile active task tracking
+├── .rules.json                  ← Global development rules (shared)
+└── <task_id>/
+    ├── .git/                        ← Task Git repo
+    ├── .gitignore
+    ├── .sag_task_state.json         ← Machine-readable state (git-ignored)
+    ├── .sag_plans/                  ← Subtask plans (git-tracked)
+    │   └── <step_id>.json
+    ├── .sag_metrics.jsonl           ← Metrics event log (git-ignored)
+    ├── .sag_artifacts/              ← Generated artifacts (git-ignored)
+    ├── .sag_executions/             ← Pause snapshots (git-ignored)
+    ├── .sag_worktrees/              ← Isolated subtask worktrees (git-ignored)
+    └── src/, tests/, docs/          ← User code (git-tracked)
 ```
 
 ---
