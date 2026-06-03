@@ -1,7 +1,7 @@
 ---
 name: sagtask
 description: 长期任务管理系统，支持分阶段推进、审批门、Git 产物追踪、子任务派发。
-version: 2.1.0
+version: 2.2.0
 category: productivity
 tags: [task-management, multi-phase, git, dispatch, tdd, brainstorming]
 author: ethanchen669
@@ -30,7 +30,7 @@ SagTask 是 Hermes Agent 的**长期任务管理插件**，用于管理需要分
 | 任意方法论 | 支持 TDD、brainstorm、debug、review 等执行模式 |
 | 状态持久化 | 所有状态存文件，Gateway 重启不丢失 |
 
-**工具数**：19 个
+**工具数**：20 个
 
 ---
 
@@ -88,7 +88,7 @@ sag_task_commit message: "[Step 2] 完成技术方案文档"
 
 ---
 
-## 工具清单（共 19 个）
+## 工具清单（共 20 个）
 
 | 工具 | 说明 |
 |------|------|
@@ -111,6 +111,7 @@ sag_task_commit message: "[Step 2] 完成技术方案文档"
 | `sag_task_dispatch` | 派发子任务给 subagent 独立执行 |
 | `sag_task_review` | 执行两步评审（spec 合规 + 代码质量）|
 | `sag_task_metrics` | 查询验证统计、覆盖率趋势、吞吐量 |
+| `sag_task_rules` | 管理开发规则：list/add/update/remove/toggle |
 
 **斜杠命令**：`/sagtask update` — 检查并安装最新版本，`/sagtask version` — 查看当前版本。
 
@@ -181,6 +182,47 @@ sag_task_debug hypothesis: "根因是 N+1 查询"
 
 ---
 
+## 开发规则系统（Rules）
+
+内置 12 条开发规则，创建任务时自动加载。规则采用**全局默认 + 任务可覆盖**模式：
+
+- 全局规则：`~/.hermes/sag_tasks/.rules.json`（所有任务共享）
+- 任务规则：`.sag_task_state.json` 中的 `rules` 字段（可增删改）
+
+### 智能上下文注入
+
+规则注入到 `pre_llm_call` 上下文的 **L2.5 层**，根据当前状态智能筛选：
+
+| 触发条件 | 注入的规则 |
+|----------|-----------|
+| methodology = `tdd` | rule-9（测试验证意图） |
+| methodology = `brainstorm` | rule-1（先思考）, rule-7（暴露冲突） |
+| methodology = `debug` | rule-12（失败大声说）, rule-4（目标驱动） |
+| 有 pending gates | rule-3（精准变更）, rule-10（检查点） |
+| 首次 turn | 全部 12 条 |
+| 无特殊状态 | rule-1, rule-2, rule-12（核心三条） |
+
+### 管理规则
+
+```bash
+# 列出当前任务的规则
+sag_task_rules action: list task_id: "my-project"
+
+# 添加自定义规则（任务级）
+sag_task_rules action: add content: "本任务使用中文注释" task_id: "my-project" category: "style"
+
+# 添加全局规则
+sag_task_rules action: add content: "所有函数必须有类型注解" category: "quality"
+
+# 禁用某条规则
+sag_task_rules action: toggle rule_id: "rule-6" task_id: "my-project"
+
+# 删除自定义规则
+sag_task_rules action: remove rule_id: "rule-custom-abc123" task_id: "my-project"
+```
+
+---
+
 ## 产物追踪（Artifact Summaries）
 
 `sag_task_advance` 时自动生成 artifact summary，包含：
@@ -217,11 +259,13 @@ sag_task_debug hypothesis: "根因是 N+1 查询"
 ```
 ~/.hermes/plugins/sagtask/       ← 插件根目录
 ├── __init__.py                  # 注册入口
-├── plugin.yaml                  # 元数据（version: 2.0.0, kind: standalone）
+├── plugin.yaml                  # 元数据（version: 2.x.0, kind: standalone）
 ├── plugin.py                    # SagTaskPlugin 核心类
 ├── hooks.py                     # _on_pre_llm_call, _on_session_start
-├── schemas.py                   # 19 个工具的 JSON schema
+├── schemas.py                   # 20 个工具的 JSON schema
 ├── _utils.py                    # _get_provider(), _validate_task_id()
+├── rules.py                     # 12 条内置规则 + 智能上下文注入
+├── updater.py                   # 自更新机制（/sagtask update）
 └── handlers/
     ├── _lifecycle.py            # create, status, pause, resume, advance, approve
     ├── _git.py                  # list, commit, branch, git_log

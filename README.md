@@ -66,7 +66,7 @@ SagTask has a built-in `/sagtask` slash command:
 /sagtask help      → Show usage
 ```
 
-## Tools (19)
+## Tools (20)
 
 ### Task Lifecycle
 
@@ -97,6 +97,14 @@ SagTask has a built-in `/sagtask` slash command:
 | `sag_task_brainstorm` | Design exploration → option selection workflow |
 | `sag_task_debug` | Systematic debugging: reproduce → diagnose → fix |
 | `sag_task_metrics` | Query verification stats, coverage trends, throughput |
+
+### Rules
+
+| Tool | Description |
+|------|-------------|
+| `sag_task_rules` | Manage development rules: list/add/update/remove/toggle |
+
+12 built-in rules auto-loaded on task creation. Smart context injection selects relevant rules based on methodology and phase.
 
 ### Git Operations
 

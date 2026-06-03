@@ -47,6 +47,7 @@ from .schemas import (  # noqa: F401
     TASK_BRAINSTORM_SCHEMA,
     TASK_DEBUG_SCHEMA,
     TASK_METRICS_SCHEMA,
+    TASK_RULES_SCHEMA,
 )
 
 from .plugin import SagTaskPlugin  # noqa: F401
@@ -82,6 +83,7 @@ from .handlers._orchestration import (  # noqa: F401
 from .handlers._metrics import _handle_sag_task_metrics  # noqa: F401
 
 from .handlers import _tool_handlers  # noqa: F401
+from .rules import handle_sag_task_rules  # noqa: F401
 
 # ── Hook callbacks — re-exported from hooks.py ───────────────────────────────
 from .hooks import _on_pre_llm_call, _on_session_start  # noqa: F401

@@ -615,6 +615,23 @@ class SagTaskPlugin:
                 if compact_parts:
                     lines.append(f"- {' | '.join(compact_parts)}")
 
+        # L2.5: Rules (smart selection)
+        from .rules import load_global_rules, merge_rules, select_rules_for_context, build_rules_context_line
+        task_rules = state.get("rules", [])
+        if (task_rules or first_turn) and self._hermes_home:
+            global_data = load_global_rules(self._hermes_home)
+            global_rules = global_data.get("rules", [])
+            all_rules = merge_rules(global_rules, task_rules)
+            selected = select_rules_for_context(
+                all_rules,
+                methodology=methodology,
+                has_pending_gates=bool(pending_gates),
+                is_first_turn=first_turn,
+            )
+            rules_line = build_rules_context_line(selected)
+            if rules_line:
+                lines.append(rules_line)
+
         # L3: Quality
         step_obj = self._get_current_step_object(state)
         if step_obj and step_obj.get("verification"):

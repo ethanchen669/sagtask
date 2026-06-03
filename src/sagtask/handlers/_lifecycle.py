@@ -38,6 +38,8 @@ def _handle_sag_task_create(args: Dict[str, Any], **kwargs: Any) -> Dict[str, An
     first_methodology = first_step.get("methodology", {})
     initial_methodology = first_methodology.get("type", "none") if first_methodology else "none"
 
+    from ..rules import get_default_rule_ids
+
     state = {
         "sag_task_id": task_id,
         "name": name,
@@ -63,6 +65,7 @@ def _handle_sag_task_create(args: Dict[str, Any], **kwargs: Any) -> Dict[str, An
             "last_verification": None,
             "review_state": None,
         },
+        "rules": [{"id": rid} for rid in get_default_rule_ids()],
     }
 
     p.save_task_state(task_id, state)

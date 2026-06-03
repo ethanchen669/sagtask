@@ -506,6 +506,45 @@ TASK_METRICS_SCHEMA = {
     },
 }
 
+TASK_RULES_SCHEMA = {
+    "name": "sag_task_rules",
+    "description": "管理开发规则：list（列出）、add（添加）、update（更新）、remove（删除）、toggle（启用/禁用）。"
+    "规则分全局（所有任务共享）和任务级（仅当前任务）。"
+    "创建新任务时自动加载 12 条内置默认规则，上下文注入时根据方法论和阶段智能筛选。",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "action": {
+                "type": "string",
+                "enum": ["list", "add", "update", "remove", "toggle"],
+                "description": "操作类型。",
+            },
+            "task_id": {
+                "type": "string",
+                "description": "任务 ID。省略则操作全局规则（list 时自动合并全局+任务规则）。",
+            },
+            "rule_id": {
+                "type": "string",
+                "description": "规则 ID。update/remove/toggle 必填；add 可选（不填则自动生成）。",
+            },
+            "content": {
+                "type": "string",
+                "description": "规则内容。add/update 必填。",
+            },
+            "category": {
+                "type": "string",
+                "enum": ["thinking", "quality", "process", "style"],
+                "description": "规则分类。默认 thinking。",
+            },
+            "enabled": {
+                "type": "boolean",
+                "description": "是否启用。用于 add（默认 true）。",
+            },
+        },
+        "required": ["action"],
+    },
+}
+
 ALL_TOOL_SCHEMAS = [
     TASK_CREATE_SCHEMA,
     TASK_STATUS_SCHEMA,
@@ -526,4 +565,5 @@ ALL_TOOL_SCHEMAS = [
     TASK_BRAINSTORM_SCHEMA,
     TASK_DEBUG_SCHEMA,
     TASK_METRICS_SCHEMA,
+    TASK_RULES_SCHEMA,
 ]
