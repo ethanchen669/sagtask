@@ -195,10 +195,10 @@ sag_task_debug hypothesis: "根因是 N+1 查询"
 
 | 触发条件 | 注入的规则 |
 |----------|-----------|
-| methodology = `tdd` | rule-9（测试验证意图） |
-| methodology = `brainstorm` | rule-1（先思考）, rule-7（暴露冲突） |
-| methodology = `debug` | rule-12（失败大声说）, rule-4（目标驱动） |
-| 有 pending gates | rule-3（精准变更）, rule-10（检查点） |
+| methodology = `tdd` | rule-9 (tests encode intent) |
+| methodology = `brainstorm` | rule-1 (think first), rule-7 (surface conflicts) |
+| methodology = `debug` | rule-12 (fail loudly), rule-4 (goal-driven) |
+| 有 pending gates | rule-3 (surgical changes), rule-10 (checkpoint) |
 | 首次 turn | 全部 12 条 |
 | 无特殊状态 | rule-1, rule-2, rule-12（核心三条） |
 
