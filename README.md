@@ -121,6 +121,8 @@ $ /sagtask status
 
 ## 🏗️ Architecture
 
+📊 **Interactive diagrams:** [Mermaid (GitHub-native)](docs/architecture-mermaid.md) · [Full ASCII reference](docs/architecture.txt) · [30s Demo Cast](docs/demo.cast)
+
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
 │                         HERMES AGENT                                │

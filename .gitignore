@@ -6,3 +6,5 @@ __pycache__/
 .coverage
 *.egg-info/
 tmp.claude-resume
+# Cast recording scratch files
+docs/*.typescript
