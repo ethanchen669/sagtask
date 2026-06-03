@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_RULES: List[Dict[str, Any]] = [
     {
         "id": "rule-1",
-        "content": "Think before coding. State assumptions explicitly; ask when uncertain; present options when ambiguous.",
+        "content": "Think Before Editing. State assumptions explicitly; ask when uncertain; present options when ambiguous.",
         "category": "thinking",
         "enabled": True,
     },
@@ -57,7 +57,7 @@ DEFAULT_RULES: List[Dict[str, Any]] = [
     },
     {
         "id": "rule-8",
-        "content": "Read before write. Check exports, callers, shared utilities before adding code. Ask when unclear.",
+        "content": "Read Before Writing. Check exports, callers, shared utilities before adding code. Ask when unclear.",
         "category": "process",
         "enabled": True,
     },
