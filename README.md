@@ -1,10 +1,207 @@
+<div align="center">
+
 # SagTask
 
-A Hermes Agent **standalone user plugin** for long-running, multi-phase tasks with structured methodology execution, subagent orchestration, and cross-session recovery. Each task gets its own Git repository with full version control.
+### Long-running task management for AI agents — phases, approvals, Git-tracked.
 
-> **SagTask is NOT a memory provider.** It coexists with any memory system and injects task context via the `pre_llm_call` hook.
+[![Version](https://img.shields.io/badge/version-2.2.1-blue.svg)]()
+[![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)]()
+[![Tests](https://img.shields.io/badge/tests-264%20passing-brightgreen.svg)]()
+[![Hermes](https://img.shields.io/badge/Hermes-Plugin-purple.svg)]()
+[![License](https://img.shields.io/badge/license-MIT-green.svg)]()
 
-## Multi-Agent Collaboration
+**The missing project manager for your AI agent.** SagTask turns a 4-week build into a sequence of phases and steps, with human-in-the-loop approval gates, automatic Git commits, and per-session context recovery — so your agent never loses its place.
+
+[Quick Install](#-quick-install-30-seconds) · [Why SagTask?](#-why-sagtask) · [Demo](#-30-second-demo) · [Architecture](#-architecture) · [Compare](#-vs-langgraph--autogen--crewai)
+
+</div>
+
+---
+
+## 🤔 Why SagTask?
+
+You start an AI agent on a 4-week project. By **day 3**, it's forgotten the original goals. By **day 7**, it's contradicted last week's design. By **day 14**, you've lost track of what's done and what's broken.
+
+**SagTask fixes this** by treating AI agent work like a real engineering project:
+
+| Without SagTask | With SagTask |
+|----------------|-------------|
+| Agent loses context between sessions | **Cross-session recovery** — task state lives in Git, not RAM |
+| No way to know "where are we?" | **Always-visible status** — phase, step, pending gates |
+| Free-form prose TODO lists | **Structured workflow** — phases → steps → gates → metrics |
+| One big prompt = chaos | **Methodology engine** — TDD, brainstorm, debug, plan-execute |
+| Can't pause/resume safely | **Snapshot + resume** — full execution context saved |
+| No audit trail | **Git-backed** — every advance = a commit, full history |
+| Approval = manual Slack message | **Built-in gates** — `Approve` / `Reject` / `Request Changes` |
+
+---
+
+## ⚡ Quick Install (30 seconds)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ethanchen669/sagtask/main/install.sh | bash
+```
+
+Then restart your Hermes gateway. That's it — **20 new tools** are loaded:
+
+```
+✓ sag_task_create        ✓ sag_task_advance      ✓ sag_task_verify
+✓ sag_task_status        ✓ sag_task_approve      ✓ sag_task_review
+✓ sag_task_list          ✓ sag_task_pause        ✓ sag_task_brainstorm
+✓ sag_task_plan          ✓ sag_task_resume       ✓ sag_task_debug
+✓ sag_task_dispatch      ✓ sag_task_commit       ✓ sag_task_metrics
+✓ sag_task_plan_update   ✓ sag_task_branch       ✓ sag_task_git_log
+                          ✓ sag_task_relate       ✓ sag_task_rules
+```
+
+<details>
+<summary><b>Manual install (if you prefer)</b></summary>
+
+```bash
+git clone https://github.com/ethanchen669/sagtask.git ~/.hermes/plugins/sagtask
+# Restart your Hermes gateway to load the plugin
+```
+
+</details>
+
+<details>
+<summary><b>Self-update via /sagtask slash command</b></summary>
+
+```
+/sagtask update    → Check GitHub releases, download + install to all profiles
+/sagtask version   → Show current installed version
+/sagtask help      → Show usage
+```
+
+</details>
+
+---
+
+## 🎬 30-Second Demo
+
+> **Scenario:** Build a CLI tool with TDD, in 3 phases.
+
+```
+$ /sagtask create \
+    --name "my-cli-tool" \
+    --phases phase-1:design,phase-2:implement,phase-3:ship \
+    --methodology tdd
+
+✓ Task created: ~/.hermes/sag_tasks/my-cli-tool/
+✓ Phase 1 of 3: Design (step: write-spec)
+  [SagTask] task=my-cli-tool phase=phase-1 step=write-spec status=active
+
+# Agent writes the spec...
+
+$ /sagtask advance
+✓ Step write-spec complete. Commit: a3f8c1d "Add design spec"
+✓ Pending gate: gate-1-spec-review (Approve / Reject / Request Changes)
+
+$ /sagtask approve gate-1-spec-review --decision Approve
+✓ Gate approved. Entering phase 2.
+
+# ... weeks of work, many sessions, many context compressions ...
+# The agent always picks up exactly where it left off.
+
+$ /sagtask status
+┌────────────────────────────────────────────┐
+│ Task:      my-cli-tool                     │
+│ Status:    active                          │
+│ Phase:     3 of 3 (Ship)                   │
+│ Step:      5 of 6 (publish-to-pypi)        │
+│ Pending:   gate-3-release (needs human)    │
+│ Commits:   47                              │
+│ Tests:     142/142 passing (94% coverage)  │
+└────────────────────────────────────────────┘
+```
+
+> **The point:** your agent treats a 4-week project the way a senior engineer would — with structure, commits, and checkpoints.
+
+---
+
+## 🏗️ Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                         HERMES AGENT                                │
+│  ┌───────────────────────────────────────────────────────────────┐  │
+│  │                    Your AI conversation                       │  │
+│  │              "SagTask, advance to next step"                  │  │
+│  └─────────────────────────────┬─────────────────────────────────┘  │
+│                                │ tool call                          │
+│                                ▼                                    │
+│  ┌─────────────────────────────────────────────────────────────┐    │
+│  │              SagTask Plugin  (20 tools)                      │    │
+│  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────────┐   │    │
+│  │  │  Lifecycle   │  │  Planning    │  │   Methodology    │   │    │
+│  │  │  create      │  │  plan        │  │   tdd            │   │    │
+│  │  │  status      │  │  dispatch    │  │   brainstorm     │   │    │
+│  │  │  advance     │  │  verify      │  │   debug          │   │    │
+│  │  │  pause/resume│  │  review      │  │   metrics        │   │    │
+│  │  │  approve     │  │              │  │                  │   │    │
+│  │  └──────────────┘  └──────────────┘  └──────────────────┘   │    │
+│  │                                                             │    │
+│  │  ┌──────────────────────────────────────────────────────┐   │    │
+│  │  │         pre_llm_call Hook (Context Injection)        │   │    │
+│  │  │   L0: task + phase  L1: gates  L2: methodology       │   │    │
+│  │  │   L2.5: rules     L3: metrics  L4: related tasks    │   │    │
+│  │  └──────────────────────────────────────────────────────┘   │    │
+│  └─────────────────────────────┬───────────────────────────────┘    │
+└────────────────────────────────┼────────────────────────────────────┘
+                                 │
+                                 ▼
+        ┌─────────────────────────────────────────────────────┐
+        │   ~/.hermes/sag_tasks/<task_id>/   (Git repo)      │
+        │  ┌──────────────────────────────────────────────┐   │
+        │  │  .sag_task_state.json  (phases/steps/gates)  │   │
+        │  │  .sag_metrics.jsonl    (verification log)    │   │
+        │  │  .sag_plans/            (subtask JSON)        │   │
+        │  │  src/, tests/, docs/   (your code)           │   │
+        │  │  + .sag_artifacts/     (auto-captured)       │   │
+        │  └──────────────────────────────────────────────┘   │
+        └─────────────────────────────────────────────────────┘
+```
+
+**Key insight:** SagTask is **NOT a memory provider**. It coexists with any memory system and injects task context via the `pre_llm_call` hook — so the LLM always knows what phase it's in, what's blocked, and what just changed.
+
+---
+
+## ⚖️ vs LangGraph / AutoGen / CrewAI
+
+> SagTask isn't trying to be a general agent framework. It's a **task management layer** that drops into any agent.
+
+| Feature | **SagTask** | LangGraph | AutoGen | CrewAI |
+|---------|:-----------:|:---------:|:-------:|:------:|
+| Phases + steps + approval gates | ✅ | ⚠️ DIY | ❌ | ❌ |
+| Cross-session state recovery | ✅ Git-backed | ⚠️ External DB | ❌ | ❌ |
+| Human-in-the-loop approval | ✅ Built-in | ⚠️ DIY interrupt | ⚠️ UserProxy | ⚠️ DIY |
+| Per-step methodology (TDD, debug…) | ✅ | ❌ | ❌ | ❌ |
+| Auto-commit per advance | ✅ | ❌ | ❌ | ❌ |
+| Works with ANY agent (not just one framework) | ✅ | ❌ LangChain only | ❌ AutoGen only | ❌ CrewAI only |
+| Subagent dispatch + worktree isolation | ✅ | ⚠️ DIY | ⚠️ Limited | ⚠️ Limited |
+| Coverage / pass-rate metrics built-in | ✅ | ❌ | ❌ | ❌ |
+| Pause + resume with full context snapshot | ✅ | ❌ | ❌ | ❌ |
+| **Install time** | **30 sec** | Hours | Hours | Hours |
+| **Learning curve** | **5 min** | Days | Days | Days |
+
+**TL;DR:** Use LangGraph/AutoGen/CrewAI to *build* agents. Use **SagTask to *manage* the long-running projects your agents work on**.
+
+---
+
+## 🌟 Real-World Usage
+
+SagTask is used internally to build itself — `sagtask-devop` is a 5-phase, 23-step task managed by SagTask, with 264 tests and 47+ Git commits.
+
+Other public tasks in the wild:
+
+- **[EchoThane](https://github.com/ethanchen669)** — AI terminal adventure game (active, Week 5)
+- **[personal-llm-wiki](https://github.com/ethanchen669)** — Personal knowledge graph (completed)
+- **[personal-local-cdn](https://github.com/ethanchen669)** — Personal CDN with auto-renewing certs (completed)
+- **[etshield-multi-agent](https://github.com/ethanchen669)** — Multi-Hermes-agent team setup (completed)
+
+---
+
+## 🧠 Multi-Agent Collaboration
 
 Hermes supports multiple **profiles** (agents) that share the same `~/.hermes/sag_tasks/` directory — all agents collaborate on the same pool of tasks. But each agent tracks its **own** active task independently:
 
@@ -41,12 +238,6 @@ Hermes supports multiple **profiles** (agents) that share the same `~/.hermes/sa
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ethanchen669/sagtask/main/install.sh | bash
 # Installs to ~/.hermes/plugins/sagtask/ + every ~/.hermes/profiles/*/plugins/sagtask/
-```
-
-## Quick Install
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/ethanchen669/sagtask/main/install.sh | bash
 ```
 
 Or manually:
@@ -117,7 +308,7 @@ SagTask has a built-in `/sagtask` slash command:
 
 ---
 
-## Architecture
+## 🗂️ Source Layout
 
 ```
 src/sagtask/
