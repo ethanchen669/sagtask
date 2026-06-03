@@ -45,7 +45,7 @@ DEFAULT_RULES: List[Dict[str, Any]] = [
     },
     {
         "id": "rule-6",
-        "content": "Token budget is sacred. 4000 per task, 30000 per session. Summarize and restart when approaching limits.",
+        "content": "Manage Context Deliberately. Treat context as a limited resource. For long tasks, maintain compact checkpoints: objective, files changed, commands run, artifacts produced, unresolved assumptions, next step. Load targeted files first; avoid broad dumps. Never skip required reading or verification to save context.",
         "category": "quality",
         "enabled": True,
     },
