@@ -29,7 +29,7 @@ TASK_CREATE_SCHEMA = {
                     "type": "object",
                     "properties": {
                         "id": {"type": "string", "description": "Unique phase ID (e.g. 'phase-1')."},
-                        "name": {"type": "string", "description": "Phase name (e.g. '数据建模')."},
+                        "name": {"type": "string", "description": "Phase name (e.g. 'Design')."},
                         "steps": {
                             "type": "array",
                             "items": {
@@ -508,37 +508,37 @@ TASK_METRICS_SCHEMA = {
 
 TASK_RULES_SCHEMA = {
     "name": "sag_task_rules",
-    "description": "管理开发规则：list（列出）、add（添加）、update（更新）、remove（删除）、toggle（启用/禁用）。"
-    "规则分全局（所有任务共享）和任务级（仅当前任务）。"
-    "创建新任务时自动加载 12 条内置默认规则，上下文注入时根据方法论和阶段智能筛选。",
+    "description": "Manage development rules: list/add/update/remove/toggle. "
+    "Rules are global (shared across all tasks) or per-task (current task only). "
+    "12 built-in rules auto-load on task creation. Smart context injection selects rules based on methodology and phase.",
     "parameters": {
         "type": "object",
         "properties": {
             "action": {
                 "type": "string",
                 "enum": ["list", "add", "update", "remove", "toggle"],
-                "description": "操作类型。",
+                "description": "Action type.",
             },
             "task_id": {
                 "type": "string",
-                "description": "任务 ID。省略则操作全局规则（list 时自动合并全局+任务规则）。",
+                "description": "Task ID. Omit to operate on global rules (list auto-merges global + task rules).",
             },
             "rule_id": {
                 "type": "string",
-                "description": "规则 ID。update/remove/toggle 必填；add 可选（不填则自动生成）。",
+                "description": "Rule ID. Required for update/remove/toggle; optional for add (auto-generated if omitted).",
             },
             "content": {
                 "type": "string",
-                "description": "规则内容。add/update 必填。",
+                "description": "Rule content. Required for add/update.",
             },
             "category": {
                 "type": "string",
                 "enum": ["thinking", "quality", "process", "style"],
-                "description": "规则分类。默认 thinking。",
+                "description": "Rule category. Default: thinking.",
             },
             "enabled": {
                 "type": "boolean",
-                "description": "是否启用。用于 add（默认 true）。",
+                "description": "Whether enabled. Used for add (default true).",
             },
         },
         "required": ["action"],
