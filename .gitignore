@@ -3,3 +3,6 @@
 .sag_executions/
 __pycache__/
 *.pyc
+.coverage
+*.egg-info/
+tmp.claude-resume
