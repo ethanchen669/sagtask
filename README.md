@@ -10,7 +10,7 @@
 [![Hermes](https://img.shields.io/badge/Hermes-Plugin-purple.svg)]()
 [![License](https://img.shields.io/badge/license-MIT-green.svg)]()
 
-**The missing project manager for your AI agent.** SagTask turns a 4-week build into a sequence of phases and steps, with human-in-the-loop approval gates, automatic Git commits, and per-session context recovery — so your agent never loses its place.
+**The missing project manager for your Hermes Agent.** SagTask turns a 4-week build into a sequence of phases and steps, with human-in-the-loop approval gates, automatic Git commits, and per-session context recovery — so your agent never loses its place.
 
 [Quick Install](#-quick-install) · [Why SagTask?](#-why-sagtask) · [Demo](#-demo) · [Architecture](#-architecture) · [Compare](#-where-sagtask-fits)
 
