@@ -36,7 +36,7 @@ You start an AI agent on a 4-week project. By **day 3**, it's forgotten the orig
 
 ---
 
-## ⚡ Quick Install (30 seconds)
+## ⚡ Quick Install
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ethanchen669/sagtask/main/install.sh | bash
@@ -77,7 +77,7 @@ git clone https://github.com/ethanchen669/sagtask.git ~/.hermes/plugins/sagtask
 
 ---
 
-## 🎬 30-Second Demo
+## 🎬 Demo
 
 > **Scenario:** Build a CLI tool with TDD, in 3 phases.
 
@@ -188,18 +188,6 @@ $ /sagtask status
 
 **TL;DR:** Use LangGraph/AutoGen/CrewAI to *build* agents. Use **SagTask to *manage* the long-running projects your agents work on**.
 
----
-
-## 🌟 Real-World Usage
-
-SagTask is used internally to build itself — `sagtask-devop` is a 5-phase, 23-step task managed by SagTask, with 264 tests and 47+ Git commits.
-
-Other public tasks in the wild:
-
-- **[EchoThane](https://github.com/ethanchen669)** — AI terminal adventure game (active, Week 5)
-- **[personal-llm-wiki](https://github.com/ethanchen669)** — Personal knowledge graph (completed)
-- **[personal-local-cdn](https://github.com/ethanchen669)** — Personal CDN with auto-renewing certs (completed)
-- **[etshield-multi-agent](https://github.com/ethanchen669)** — Multi-Hermes-agent team setup (completed)
 
 ---
 
