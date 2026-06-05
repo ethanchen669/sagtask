@@ -2,7 +2,7 @@
 
 # SagTask
 
-### Long-running task management for AI agents — Steps/Phases, approvals, Git-tracked.
+### Long-running task management for AI agents — Steps/Phases, Approvals, Git-tracked.
 
 [![Version](https://img.shields.io/badge/version-2.2.1-blue.svg)]()
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)]()
