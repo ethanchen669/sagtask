@@ -2,7 +2,7 @@
 
 # SagTask
 
-### Long-running task management for AI agents — phases, approvals, Git-tracked.
+### Long-running task management for AI agents — Steps/Phases, approvals, Git-tracked.
 
 [![Version](https://img.shields.io/badge/version-2.2.1-blue.svg)]()
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)]()
@@ -286,6 +286,90 @@ SagTask has a built-in `/sagtask` slash command:
 /sagtask help      → Show usage
 ```
 
+---
+
+## 🎯 12 Rules + Smart Context Injection
+
+**The headline feature.** Long-running agents drift — they forget conventions, skip verification, over-engineer. SagTask ships **12 built-in development rules** and, crucially, injects only the *relevant* ones into each LLM call based on the current methodology and phase. The agent gets the right guardrails at the right moment, without burning tokens on rules that don't apply right now.
+
+```
+            ┌──────────────────────────────────────────────┐
+            │  12 Development Rules                        │
+            │  (global defaults + per-task overrides)      │
+            └───────────────────────┬──────────────────────┘
+                                    │  smart filter by state
+        ┌───────────────────────────┼───────────────────────────┐
+        ▼                           ▼                           ▼
+  methodology=tdd            pending gate              methodology=debug
+  → rule-9                   → rule-3, rule-10         → rule-12, rule-4
+  (tests encode intent)      (surgical, checkpoint)    (fail loudly, goal-driven)
+        └───────────────────────────┼───────────────────────────┘
+                                    ▼
+                   injected at L2.5 of pre_llm_call
+                   (only what's relevant, ~1 line each)
+```
+
+### The 12 Rules
+
+| # | Rule | Category |
+|---|------|----------|
+| 1 | **Think Before Editing.** State assumptions explicitly; ask when uncertain; present options when ambiguous. | thinking |
+| 2 | **Simplicity first.** Minimum code that solves the problem. No speculative design, no unrequested features. | thinking |
+| 3 | **Surgical changes.** Touch only necessary code; don't refactor unrequested parts; match existing style. | process |
+| 4 | **Goal-driven.** Define verification criteria and loop until met, don't follow rigid step sequences. | process |
+| 5 | **LLM for judgment only.** Use LLM for classification, drafting, summarization, extraction. Use code for routing, retries, deterministic transforms. | quality |
+| 6 | **Manage Context Deliberately.** Treat context as a limited resource. For long tasks, maintain compact checkpoints: objective, files changed, commands run, artifacts produced, unresolved assumptions, next step. Load targeted files first; avoid broad dumps. Never skip required reading or verification to save context. | quality |
+| 7 | **Surface conflicts, don't average them.** When patterns contradict, pick one and explain; flag the other for cleanup. | thinking |
+| 8 | **Read Before Writing.** Check exports, callers, shared utilities before adding code. Ask when unclear. | process |
+| 9 | **Tests encode intent.** Tests should encode why behavior matters, not just pass when business logic changes. | quality |
+| 10 | **Checkpoint every step.** Summarize progress, verify state, list remaining work. Stop and restate position when lost. | process |
+| 11 | **Match codebase conventions.** Consistency over personal preference. Raise disagreements explicitly, don't silently change style. | style |
+| 12 | **Fail loudly.** Skipping tests and saying 'tests pass' is misleading. Surface uncertainty by default. | quality |
+
+### Smart Injection — only the relevant rules, only when needed
+
+Rules are injected into `pre_llm_call` context at **L2.5**, filtered by current state so the agent never sees all 12 at once (except the first turn):
+
+| Trigger | Rules Injected |
+|---------|---------------|
+| methodology = `tdd` | rule-9 (tests encode intent) |
+| methodology = `brainstorm` | rule-1 (think first), rule-7 (surface conflicts) |
+| methodology = `debug` | rule-12 (fail loudly), rule-4 (goal-driven) |
+| Pending gates | rule-3 (surgical changes), rule-10 (checkpoint) |
+| First turn | All 12 rules |
+| No special state | rule-1, rule-2, rule-12 (core three) |
+
+### Storage & Management
+
+- **Global rules:** `~/.hermes/sag_tasks/.rules.json` — shared across all tasks
+- **Per-task overrides:** `.sag_task_state.json` → `rules` field — task-specific additions/toggles
+
+```bash
+sag_task_rules action: list                                        # list current task's rules
+sag_task_rules action: add content: "Use type hints" category: "quality" task_id: "my-project"
+sag_task_rules action: add content: "All PRs need 2 approvals" category: "process"   # global
+sag_task_rules action: toggle rule_id: "rule-6" task_id: "my-project"
+sag_task_rules action: remove rule_id: "rule-custom-abc123" task_id: "my-project"
+```
+
+---
+
+## 🧭 Methodology System
+
+**Each step can declare *how* it should be done.** SagTask doesn't just track *what* step you're on — it scaffolds the *method*, implemented as state machines (not just prompts). TDD auto-flips red→green on verify; debug walks reproduce→diagnose→fix; brainstorm forces option generation before commitment.
+
+| Type | Workflow | State machine? |
+|------|----------|:--------------:|
+| `tdd` | RED → GREEN → REFACTOR cycle, auto-transitions on `sag_task_verify` | ✅ |
+| `brainstorm` | Generate 3+ options → user selects → implement | ✅ |
+| `debug` | Reproduce → diagnose (record hypothesis) → fix | ✅ |
+| `plan-execute` | Plan subtasks → execute sequentially → verify each | ✅ |
+| `none` | No methodology constraint (default) | — |
+
+The active methodology drives **L2 context injection** (phase/progress) and feeds the [Smart Context Injection](#-12-rules--smart-context-injection) rule filter above — e.g. a `tdd` step automatically surfaces rule-9 *(tests encode intent)*.
+
+---
+
 ## Tools (20)
 
 ### Task Lifecycle
@@ -324,7 +408,7 @@ SagTask has a built-in `/sagtask` slash command:
 |------|-------------|
 | `sag_task_rules` | Manage development rules: list/add/update/remove/toggle |
 
-12 built-in rules auto-loaded on task creation. Smart context injection selects relevant rules based on methodology and phase. See [Development Rules System](#development-rules-system) for details.
+12 built-in rules auto-loaded on task creation. Smart context injection selects relevant rules based on methodology and phase. See [12 Rules + Smart Context Injection](#-12-rules--smart-context-injection) for details.
 
 ### Git Operations
 
@@ -383,80 +467,6 @@ SagTask injects a compact, adaptive context block before each LLM call. The syst
 | **L4b** | Related task details | First turn, step switch, user intent |
 
 **Cache:** Per-session per-task cache with context hashing. Stable state → single L0 line (~50 tokens). Changed state → relevant layers expand.
-
----
-
-## Methodology System
-
-Each step can declare a `methodology` that guides execution:
-
-| Type | Workflow |
-|------|----------|
-| `tdd` | RED → GREEN → REFACTOR cycle, auto-transitions on verify |
-| `brainstorm` | Generate 3+ options → user selects → implement |
-| `debug` | Reproduce → diagnose (hypothesis) → fix |
-| `plan-execute` | Plan subtasks → execute sequentially → verify each |
-| `none` | No methodology constraint (default) |
-
----
-
-## Development Rules System
-
-12 built-in rules guide agent behavior across all tasks. Rules use a **global defaults + per-task overrides** pattern.
-
-### Storage
-
-- **Global rules:** `~/.hermes/sag_tasks/.rules.json` — shared across all tasks
-- **Per-task overrides:** `.sag_task_state.json` → `rules` field — task-specific additions/toggles
-
-### The 12 Rules
-
-| # | Rule | Category |
-|---|------|----------|
-| 1 | **Think Before Editing.** State assumptions explicitly; ask when uncertain; present options when ambiguous. | thinking |
-| 2 | **Simplicity first.** Minimum code that solves the problem. No speculative design, no unrequested features. | thinking |
-| 3 | **Surgical changes.** Touch only necessary code; don't refactor unrequested parts; match existing style. | process |
-| 4 | **Goal-driven.** Define verification criteria and loop until met, don't follow rigid step sequences. | process |
-| 5 | **LLM for judgment only.** Use LLM for classification, drafting, summarization, extraction. Use code for routing, retries, deterministic transforms. | quality |
-| 6 | **Manage Context Deliberately.** Treat context as a limited resource. For long tasks, maintain compact checkpoints: objective, files changed, commands run, artifacts produced, unresolved assumptions, next step. Load targeted files first; avoid broad dumps. Never skip required reading or verification to save context. | quality |
-| 7 | **Surface conflicts, don't average them.** When patterns contradict, pick one and explain; flag the other for cleanup. | thinking |
-| 8 | **Read Before Writing.** Check exports, callers, shared utilities before adding code. Ask when unclear. | process |
-| 9 | **Tests encode intent.** Tests should encode why behavior matters, not just pass when business logic changes. | quality |
-| 10 | **Checkpoint every step.** Summarize progress, verify state, list remaining work. Stop and restate position when lost. | process |
-| 11 | **Match codebase conventions.** Consistency over personal preference. Raise disagreements explicitly, don't silently change style. | style |
-| 12 | **Fail loudly.** Skipping tests and saying 'tests pass' is misleading. Surface uncertainty by default. | quality |
-
-### Smart Context Injection
-
-Rules are injected into `pre_llm_call` context at **L2.5**, filtered by current state:
-
-| Trigger | Rules Injected |
-|---------|---------------|
-| methodology = `tdd` | rule-9 (tests encode intent) |
-| methodology = `brainstorm` | rule-1 (think first), rule-7 (surface conflicts) |
-| methodology = `debug` | rule-12 (fail loudly), rule-4 (goal-driven) |
-| Pending gates | rule-3 (surgical changes), rule-10 (checkpoint) |
-| First turn | All 12 rules |
-| No special state | rule-1, rule-2, rule-12 (core three) |
-
-### Managing Rules
-
-```bash
-# List current task's rules
-sag_task_rules action: list
-
-# Add a custom rule (task-level)
-sag_task_rules action: add content: "Use type hints on all functions" task_id: "my-project" category: "quality"
-
-# Add a global rule
-sag_task_rules action: add content: "All PRs need 2 approvals" category: "process"
-
-# Toggle a rule on/off
-sag_task_rules action: toggle rule_id: "rule-6" task_id: "my-project"
-
-# Remove a custom rule
-sag_task_rules action: remove rule_id: "rule-custom-abc123" task_id: "my-project"
-```
 
 ---
 
