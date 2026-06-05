@@ -12,7 +12,7 @@
 
 **The missing project manager for your AI agent.** SagTask turns a 4-week build into a sequence of phases and steps, with human-in-the-loop approval gates, automatic Git commits, and per-session context recovery — so your agent never loses its place.
 
-[Quick Install](#-quick-install-30-seconds) · [Why SagTask?](#-why-sagtask) · [Demo](#-30-second-demo) · [Architecture](#-architecture) · [Compare](#-vs-langgraph--autogen--crewai)
+[Quick Install](#-quick-install) · [Why SagTask?](#-why-sagtask) · [Demo](#-demo) · [Architecture](#-architecture) · [Compare](#-where-sagtask-fits)
 
 </div>
 
@@ -79,114 +79,153 @@ git clone https://github.com/ethanchen669/sagtask.git ~/.hermes/plugins/sagtask
 
 ## 🎬 Demo
 
-> **Scenario:** Build a CLI tool with TDD, in 3 phases.
+> **The agent drives SagTask itself.** No slash commands, no human babysitting — the agent *calls tools*, reads structured JSON back, and reacts. Below: an agent building a token-bucket rate limiter with TDD, end-to-end. Every result shape is exactly what the real handlers return; the `[SagTask]` line is injected before each turn to keep the agent oriented.
 
 ```
-$ /sagtask create \
-    --name "my-cli-tool" \
-    --phases phase-1:design,phase-2:implement,phase-3:ship \
-    --methodology tdd
+USER: Add a token-bucket rate limiter to our API client, TDD.
 
-✓ Task created: ~/.hermes/sag_tasks/my-cli-tool/
-✓ Phase 1 of 3: Design (step: write-spec)
-  [SagTask] task=my-cli-tool phase=phase-1 step=write-spec status=active
+[SagTask] task= status=none phase= step=
+agent: New long-running feature. I'll model it as a phased SagTask so state
+       survives across sessions, then drive it with tool calls.
 
-# Agent writes the spec...
+agent → sag_task_create({
+  sag_task_id: "rate-limiter-v1", name: "Token-bucket rate limiter",
+  phases: [{ id:"phase-1", name:"Implement", steps:[
+    { id:"step-1", name:"Core limiter",
+      methodology:{ type:"tdd", config:{ coverage_threshold:90, test_first:true } },
+      verification:{ commands:["pytest tests/test_limiter.py -q"], must_pass:true } },
+    { id:"step-2", name:"Wire into client",
+      gate:{ id:"gate-ship", question:"Ship limiter to prod client?",
+             choices:["Approve","Reject","Request Changes"] } }]}]})
+← { "ok": true, "current_phase": "phase-1", "current_step": "step-1",
+    "message": "Task 'Token-bucket rate limiter' created with 1 phase(s). Git repo initialized." }
 
-$ /sagtask advance
-✓ Step write-spec complete. Commit: a3f8c1d "Add design spec"
-✓ Pending gate: gate-1-spec-review (Approve / Reject / Request Changes)
+[SagTask] task=rate-limiter-v1 status=active phase=phase-1 step=step-1
+- Phase: Implement | Step: Core limiter
+agent: On step-1 (TDD). Break it into subtasks so I can track progress.
 
-$ /sagtask approve gate-1-spec-review --decision Approve
-✓ Gate approved. Entering phase 2.
+agent → sag_task_plan({ granularity: "fine" })
+← { "ok": true, "step_id": "step-1", "plan_file": ".sag_plans/step-1.json", "total_subtasks": 3,
+    "subtasks": [ {"id":"st-1","title":"Write failing tests for token bucket"},
+                  {"id":"st-2","title":"Implement minimal TokenBucket"},
+                  {"id":"st-3","title":"Refactor + edge cases"} ] }
 
-# ... weeks of work, many sessions, many context compressions ...
-# The agent always picks up exactly where it left off.
+agent: RED first. (writes tests/test_limiter.py) They should fail. Verifying RED.
 
-$ /sagtask status
-┌────────────────────────────────────────────┐
-│ Task:      my-cli-tool                     │
-│ Status:    active                          │
-│ Phase:     3 of 3 (Ship)                   │
-│ Step:      5 of 6 (publish-to-pypi)        │
-│ Pending:   gate-3-release (needs human)    │
-│ Commits:   47                              │
-│ Tests:     142/142 passing (94% coverage)  │
-└────────────────────────────────────────────┘
+agent → sag_task_verify({})
+← { "ok": true, "passed": false,
+    "results": [{ "command":"pytest tests/test_limiter.py -q", "exit_code":1,
+                  "stdout":"E  ImportError: cannot import name 'TokenBucket'" }],
+    "message": "Verification failed (1 commands)." }
+
+agent: Good — RED confirmed (tdd_phase=red recorded). (implements TokenBucket) Now GREEN.
+
+agent → sag_task_verify({})
+← { "ok": true, "passed": true,
+    "results": [{ "command":"pytest tests/test_limiter.py -q", "exit_code":0,
+                  "stdout":"6 passed in 0.11s" }],
+    "message": "Verification passed (1 commands)." }
+
+[SagTask] task=rate-limiter-v1 status=active phase=phase-1 step=step-1
+agent: GREEN. must_pass is satisfied — advancing.
+
+agent → sag_task_advance({ commit_message:"[step-1] token-bucket core, tests green" })
+← { "ok": true, "previous_step":"step-1", "current_step":"step-2",
+    "message": "Advanced to phase-1/step-2. New branch 'step/phase-1/step-2' created." }
+
+[SagTask] task=rate-limiter-v1 status=active phase=phase-1 step=step-2
+- Phase: Implement | Step: Wire into client
+agent: step-2 carries gate-ship. I surface the question to the user — I don't
+       self-approve. User says "Approve." Recording the decision.
+
+agent → sag_task_approve({ gate_id:"gate-ship", decision:"Approve", comment:"LGTM, ship it" })
+← { "ok": true, "status":"completed", "message": "All phases completed. Task finished!" }
+
+[SagTask] task=rate-limiter-v1 status=completed phase=phase-1 step=step-2
+agent: Done. Limiter merged, gate approved, state Git-committed and recoverable.
 ```
 
-> **The point:** your agent treats a 4-week project the way a senior engineer would — with structure, commits, and checkpoints.
+> **The point:** the agent treats a feature the way a senior engineer would — phased, test-first, checkpointed to Git, and blocked at human gates. Try `sag_task_advance` before tests pass and it **refuses** (`must_pass`). Restart the gateway mid-task and the agent picks up exactly where it left off.
 
 ---
 
 ## 🏗️ Architecture
 
-📊 **Interactive diagrams:** [Mermaid (GitHub-native)](docs/architecture-mermaid.md) · [Full ASCII reference](docs/architecture.txt) · [30s Demo Cast](docs/demo.cast)
+📊 **Full diagrams:** [Mermaid (renders on GitHub)](docs/architecture-mermaid.md) · [ASCII reference](docs/architecture.txt) · [asciinema cast](docs/demo.cast) (`asciinema play docs/demo.cast`)
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                         HERMES AGENT                                │
-│  ┌───────────────────────────────────────────────────────────────┐  │
-│  │                    Your AI conversation                       │  │
-│  │              "SagTask, advance to next step"                  │  │
-│  └─────────────────────────────┬─────────────────────────────────┘  │
-│                                │ tool call                          │
-│                                ▼                                    │
-│  ┌─────────────────────────────────────────────────────────────┐    │
-│  │              SagTask Plugin  (20 tools)                      │    │
-│  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────────┐   │    │
-│  │  │  Lifecycle   │  │  Planning    │  │   Methodology    │   │    │
-│  │  │  create      │  │  plan        │  │   tdd            │   │    │
-│  │  │  status      │  │  dispatch    │  │   brainstorm     │   │    │
-│  │  │  advance     │  │  verify      │  │   debug          │   │    │
-│  │  │  pause/resume│  │  review      │  │   metrics        │   │    │
-│  │  │  approve     │  │              │  │                  │   │    │
-│  │  └──────────────┘  └──────────────┘  └──────────────────┘   │    │
-│  │                                                             │    │
-│  │  ┌──────────────────────────────────────────────────────┐   │    │
-│  │  │         pre_llm_call Hook (Context Injection)        │   │    │
-│  │  │   L0: task + phase  L1: gates  L2: methodology       │   │    │
-│  │  │   L2.5: rules     L3: metrics  L4: related tasks    │   │    │
-│  │  └──────────────────────────────────────────────────────┘   │    │
-│  └─────────────────────────────┬───────────────────────────────┘    │
-└────────────────────────────────┼────────────────────────────────────┘
-                                 │
-                                 ▼
-        ┌─────────────────────────────────────────────────────┐
-        │   ~/.hermes/sag_tasks/<task_id>/   (Git repo)      │
-        │  ┌──────────────────────────────────────────────┐   │
-        │  │  .sag_task_state.json  (phases/steps/gates)  │   │
-        │  │  .sag_metrics.jsonl    (verification log)    │   │
-        │  │  .sag_plans/            (subtask JSON)        │   │
-        │  │  src/, tests/, docs/   (your code)           │   │
-        │  │  + .sag_artifacts/     (auto-captured)       │   │
-        │  └──────────────────────────────────────────────┘   │
-        └─────────────────────────────────────────────────────┘
+   default profile      profile: hbuilder      profile: hexpert      ← Multi-Agent
+  ┌──────────────┐     ┌──────────────┐       ┌──────────────┐         (N Hermes
+  │ Hermes Agent │     │ Hermes Agent │       │ Hermes Agent │          profiles,
+  └──────┬───────┘     └──────┬───────┘       └──────┬───────┘          same plugin)
+         │ tool call          │                      │
+         └────────────────────┼──────────────────────┘
+                              ▼
+┌──────────────────────────────────────────────────────────────────────┐
+│                   SagTask Plugin  (20 tools)                        │
+│  ┌────────────┐ ┌────────────┐ ┌────────────┐ ┌────────────┐         │
+│  │ Lifecycle  │ │ Planning   │ │ Methodology│ │ Git Ops    │         │
+│  │ create     │ │ plan       │ │ brainstorm │ │ commit     │         │
+│  │ status     │ │ plan_update│ │ debug      │ │ branch     │         │
+│  │ advance    │ │ dispatch   │ │ metrics    │ │ git_log    │         │
+│  │ pause/resume││ verify     │ │ (tdd via   │ │ relate     │         │
+│  │ approve    │ │ review     │ │  verify)   │ │            │         │
+│  │ list       │ │            │ │            │ │            │         │
+│  └────────────┘ └────────────┘ └────────────┘ └────────────┘         │
+│  ┌──────────────────────────┐  ┌──────────────────────────────────┐  │
+│  │  Rules engine (sag_task_ │  │  pre_llm_call Hook               │  │
+│  │  rules)                  │  │  — Layered Context Injection —   │  │
+│  │  12 built-in rules,      │─▶│  L0  task/phase/step (every turn)│  │
+│  │  global + per-task,      │  │  L1  gates   L1.5 artifacts      │  │
+│  │  smart-filtered by       │  │  L2  methodology  L2.5 rules     │  │
+│  │  phase + methodology     │  │  L3  metrics   L4a/b related     │  │
+│  └──────────────────────────┘  └────────────────┬─────────────────┘  │
+└───────────────────────────────────────────────┼─────────────────────┘
+                                                 │ persists to
+                                                 ▼
+   ~/.hermes/sag_tasks/         ← shared task pool across ALL profiles
+   ├── .active_tasks.json         per-profile active task pointer
+   ├── .rules.json                global development rules (shared)
+   └── <task_id>/   (Git repo)
+       ├── .sag_task_state.json   phases / steps / gates / rules
+       ├── .sag_metrics.jsonl     append-only verification log
+       ├── .sag_plans/            subtask JSON (git-tracked)
+       ├── .sag_artifacts/        auto-captured git diffs
+       └── src/, tests/, docs/    your code
 ```
 
-**Key insight:** SagTask is **NOT a memory provider**. It coexists with any memory system and injects task context via the `pre_llm_call` hook — so the LLM always knows what phase it's in, what's blocked, and what just changed.
+**Two things make this work:**
+
+- **NOT a memory provider.** SagTask coexists with any memory system. It injects task context via the `pre_llm_call` hook — so the LLM always knows what phase it's in, what's blocked, and what just changed, **plus** the relevant subset of the 12 development rules for the current phase/methodology.
+- **Multi-Agent by design.** Every Hermes profile loads the same plugin but tracks its **own** active task via `.active_tasks.json`, while all profiles share one task pool. One agent can `relate` its task to another's for cross-pollination.
 
 ---
 
-## ⚖️ vs LangGraph / AutoGen / CrewAI
+## ⚖️ Where SagTask fits
 
-> SagTask isn't trying to be a general agent framework. It's a **task management layer** that drops into any agent.
+SagTask is a **Hermes plugin**, not an agent framework. The fairest comparison isn't to agent *runtimes* — it's to other tools that give a coding agent **engineering discipline**. The closest peer is **Claude + Superpowers**.
 
-| Feature | **SagTask** | LangGraph | AutoGen | CrewAI |
-|---------|:-----------:|:---------:|:-------:|:------:|
-| Phases + steps + approval gates | ✅ | ⚠️ DIY | ❌ | ❌ |
-| Cross-session state recovery | ✅ Git-backed | ⚠️ External DB | ❌ | ❌ |
-| Human-in-the-loop approval | ✅ Built-in | ⚠️ DIY interrupt | ⚠️ UserProxy | ⚠️ DIY |
-| Per-step methodology (TDD, debug…) | ✅ | ❌ | ❌ | ❌ |
-| Auto-commit per advance | ✅ | ❌ | ❌ | ❌ |
-| Works with ANY agent (not just one framework) | ✅ | ❌ LangChain only | ❌ AutoGen only | ❌ CrewAI only |
-| Subagent dispatch + worktree isolation | ✅ | ⚠️ DIY | ⚠️ Limited | ⚠️ Limited |
-| Coverage / pass-rate metrics built-in | ✅ | ❌ | ❌ | ❌ |
-| Pause + resume with full context snapshot | ✅ | ❌ | ❌ | ❌ |
-| **Install time** | **30 sec** | Hours | Hours | Hours |
-| **Learning curve** | **5 min** | Days | Days | Days |
+### vs Claude + Superpowers (the closest peer)
 
-**TL;DR:** Use LangGraph/AutoGen/CrewAI to *build* agents. Use **SagTask to *manage* the long-running projects your agents work on**.
+[Superpowers](https://github.com/obra/superpowers) gives a coding agent a library of **skills** — markdown playbooks for TDD, planning, debugging, code review, subagent dispatch. SagTask borrows several of these methodologies (its own docs credit the lineage). The difference is **guidance vs. enforcement, and stateless vs. stateful**:
+
+| | **Superpowers** | **SagTask** |
+|--|-----------------|-------------|
+| **What it is** | Skills = instructions injected into the prompt | Stateful infrastructure = tools + persisted state |
+| **How it works** | Agent *reads* a skill and is asked to follow it | Tool calls *mutate* durable state; some transitions are *blocked* in code |
+| **State** | Stateless — relies on the host's ephemeral TODO list per session | **Git repo per task** + `.sag_task_state.json`; survives gateway restarts |
+| **Approval gates** | A skill can *recommend* pausing for a human | `must_pass` verification and gates **mechanically block** `advance` |
+| **Progress tracking** | In-session TodoWrite (lost when the session ends) | Phases/steps/subtasks + metrics event log, queryable across sessions |
+| **Methodology** | TDD / debugging / brainstorming as prose skills | Same methodologies, but as **state machines** (e.g. TDD auto-flips red→green on verify) |
+| **Best at** | Teaching *how* to do good engineering, portably across hosts | Remembering *where you are* and *enforcing* the process over weeks |
+
+**They're complementary, not exclusive.** Superpowers shapes *how* the agent works in a session; SagTask remembers *what's done* and *what's blocked* across many sessions. You can run both.
+
+### vs agent frameworks (LangGraph / AutoGen / CrewAI)
+
+These are a **different layer** — frameworks for *building* agents (graphs, conversations, crews), each with its own strong persistence story (LangGraph checkpointers, AutoGen `save_state`, CrewAI memory) and, for AutoGen/CrewAI, multi-agent orchestration as a core strength. SagTask doesn't compete with them and doesn't replace a runtime. What it adds — and what these frameworks leave you to wire yourself — is a ready-made **phases → gates → verify → commit** project workflow with methodology scaffolding and a Git trail. Use a framework to *build* the agent; use SagTask (on Hermes) to *manage the multi-week project* it works on.
+
+**Honest caveat:** SagTask runs **inside Hermes**, not standalone or inside other frameworks. The *ideas* (phased Git-backed tasks, gates, methodology scaffolding) port anywhere — the plugin doesn't.
 
 
 ---
